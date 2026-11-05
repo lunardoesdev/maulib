@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""SharedVPNLink API tests that do not require a working upstream proxy.
+
+They cover handle lifecycle, generated/manual auth, the per-link authenticated
+SOCKS5 endpoint, error paths, concurrent ping of several links and destroy.
+"""
+
+import ctypes
+import json
+import os
+import socket
+import sys
+import threading
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+from test_api import DEAD_VLESS, LIB_PATH, Milib  # noqa: E402
+
+
+def recv_exact(sock, size):
+    data = b""
+    while len(data) < size:
+        chunk = sock.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("connection closed")
+        data += chunk
+    return data
+
+
+def socks5_auth(addr, username, password, timeout=3.0):
+    """Perform a SOCKS5 user/password handshake. Returns True when accepted."""
+    host, port = addr.rsplit(":", 1)
+    with socket.create_connection((host, int(port)), timeout=timeout) as sock:
+        sock.sendall(b"\x05\x01\x02")
+        ver, method = recv_exact(sock, 2)
+        if ver != 5 or method != 2:
+            return False
+        user = username.encode()
+        pwd = password.encode()
+        sock.sendall(b"\x01" + bytes([len(user)]) + user + bytes([len(pwd)]) + pwd)
+        _, status = recv_exact(sock, 2)
+        return status == 0
+
+
+class LinkTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        if not os.path.exists(LIB_PATH):
+            raise unittest.SkipTest(f"{LIB_PATH} not built")
+        cls.api = Milib()
+        cls.api.init(options={"mixed_port": 0, "log_level": "error"})
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.api.shutdown()
+
+    def make_link(self, options=None):
+        link = self.api.link_create(DEAD_VLESS, options)
+        self.addCleanup(self.api.link_destroy, link)
+        return link
+
+    def test_01_create_and_info(self):
+        link = self.make_link()
+        info = self.api.link_info(link)
+        self.assertTrue(info["ok"], info)
+        self.assertGreater(info["link_id"], 0)
+        self.assertEqual(info["name"], "dead-node")
+        self.assertEqual(info["type"], "VLESS")
+        self.assertEqual(info["socks"]["username"], "milib")
+        self.assertGreaterEqual(len(info["socks"]["password"]), 16)
+        self.assertTrue(info["socks"]["addr"].startswith("127.0.0.1:"))
+
+        listed = self.api.link_list()
+        self.assertTrue(listed["ok"], listed)
+        self.assertIn(info["link_id"], [item["link_id"] for item in listed["links"]])
+
+    def test_02_manual_auth(self):
+        link = self.make_link({"username": "user-1", "password": "manual-pass"})
+        info = self.api.link_info(link)
+        self.assertEqual(info["auth"]["username"], "user-1")
+        self.assertEqual(info["auth"]["password"], "manual-pass")
+        self.assertTrue(socks5_auth(info["socks"]["addr"], "user-1", "manual-pass"))
+        self.assertFalse(socks5_auth(info["socks"]["addr"], "user-1", "wrong"))
+
+    def test_03_generated_auth_is_enforced(self):
+        link = self.make_link()
+        info = self.api.link_info(link)
+        addr = info["socks"]["addr"]
+        self.assertTrue(socks5_auth(addr, info["auth"]["username"], info["auth"]["password"]))
+        self.assertFalse(socks5_auth(addr, info["auth"]["username"], "wrong-password"))
+        self.assertFalse(socks5_auth(addr, "other", info["auth"]["password"]))
+
+    def test_04_local_proxy_can_be_disabled(self):
+        link = self.make_link({"local_proxy": False})
+        info = self.api.link_info(link)
+        self.assertEqual(info["socks"]["addr"], "")
+
+    def test_05_proxy_password_override(self):
+        link = self.make_link({"proxy_password": "override-uuid"})
+        info = self.api.link_info(link)
+        self.assertTrue(info["ok"], info)
+
+    def test_06_ping_dead_link_fails(self):
+        link = self.make_link()
+        result = self.api.link_ping(
+            link,
+            {"url": "http://127.0.0.1:9/204", "timeout_ms": 1500, "expected": "204"},
+        )
+        self.assertFalse(result["ok"], result)
+
+    def test_07_speed_dead_link_fails(self):
+        link = self.make_link()
+        result = self.api.link_speed(
+            link, {"url": "http://127.0.0.1:9/", "timeout_ms": 1500, "bytes": 1024}
+        )
+        self.assertFalse(result["ok"], result)
+
+    def test_08_exit_ip_dead_link_fails(self):
+        link = self.make_link()
+        result = self.api.link_exit_ip(
+            link, {"url": "http://127.0.0.1:9/ip", "timeout_ms": 1500}
+        )
+        self.assertFalse(result["ok"], result)
+
+    def test_09_many_pings_are_isolated(self):
+        links = [self.make_link() for _ in range(3)]
+        ids = [self.api.link_info(link)["link_id"] for link in links]
+        result = self.api.links_ping_many(
+            ids,
+            {"url": "http://127.0.0.1:9/204", "timeout_ms": 1200, "expected": "204"},
+        )
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["count"], 3)
+        self.assertEqual(len(result["results"]), 3)
+        for item in result["results"]:
+            self.assertFalse(item["ok"], item)
+            self.assertIn("error", item)
+
+    def test_10_async_ping_callback(self):
+        link = self.make_link()
+        event = threading.Event()
+        box = {}
+        CB = ctypes.CFUNCTYPE(None, ctypes.c_int64, ctypes.c_char_p, ctypes.c_void_p)
+
+        def on_done(task_id, payload, user):
+            box["id"] = task_id
+            box["payload"] = json.loads(payload.decode()) if payload else None
+            event.set()
+
+        cb = CB(on_done)
+        self.api.lib.milib_link_ping_async.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        self.api.lib.milib_link_ping_async.restype = ctypes.c_int64
+        task_id = self.api.lib.milib_link_ping_async(
+            link,
+            json.dumps({"url": "http://127.0.0.1:9/204", "timeout_ms": 1000}).encode(),
+            cb,
+            None,
+        )
+        self.assertGreater(task_id, 0)
+        self.assertTrue(event.wait(10))
+        self.assertEqual(box["id"], task_id)
+        self.assertFalse(box["payload"]["ok"], box["payload"])
+
+    def test_11_remove_proxy_is_guarded(self):
+        link = self.make_link()
+        info = self.api.link_info(link)
+        result = self.api.remove(info["name"])
+        self.assertFalse(result["ok"], result)
+        self.assertIn("link", result["error"])
+
+    def run_async(self, fn_name, link, options):
+        event = threading.Event()
+        box = {}
+        CB = ctypes.CFUNCTYPE(None, ctypes.c_int64, ctypes.c_char_p, ctypes.c_void_p)
+
+        def on_done(task_id, payload, user):
+            box["id"] = task_id
+            box["payload"] = json.loads(payload.decode()) if payload else None
+            event.set()
+
+        fn = getattr(self.api.lib, fn_name)
+        fn.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        fn.restype = ctypes.c_int64
+        cb = CB(on_done)
+        task_id = fn(link, json.dumps(options).encode(), cb, None)
+        self.assertGreater(task_id, 0)
+        self.assertTrue(event.wait(10), "callback timeout")
+        self.assertEqual(box["id"], task_id)
+        return box["payload"]
+
+    def test_13_async_speed_and_exit_ip(self):
+        link = self.make_link()
+        speed = self.run_async(
+            "milib_link_speed_async",
+            link,
+            {"url": "http://127.0.0.1:9/", "timeout_ms": 1200, "bytes": 1024},
+        )
+        self.assertFalse(speed["ok"], speed)
+        exit_ip = self.run_async(
+            "milib_link_exit_ip_async",
+            link,
+            {"url": "http://127.0.0.1:9/ip", "timeout_ms": 1200},
+        )
+        self.assertFalse(exit_ip["ok"], exit_ip)
+
+    def test_12_destroy(self):
+        link = self.api.link_create(DEAD_VLESS)
+        info = self.api.link_info(link)
+        addr = info["socks"]["addr"]
+        self.assertEqual(self.api.link_destroy(link), 0)
+
+        # The handle is freed: never touch it again. Check the registry instead.
+        self.assertNotIn(
+            info["link_id"],
+            [item["link_id"] for item in self.api.link_list()["links"]],
+        )
+        with self.assertRaises(OSError):
+            host, port = addr.rsplit(":", 1)
+            socket.create_connection((host, int(port)), timeout=1).close()
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
