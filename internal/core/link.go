@@ -33,7 +33,7 @@ const (
 	maxExitIPBody     = 64 << 10
 )
 
-// LinkOptions maps the JSON options accepted by milib_link_create.
+// LinkOptions configures a SharedVPNLink.
 //
 // Username/Password protect the per-link local SOCKS5 endpoint. When they are
 // empty a username and a random password are generated.
@@ -41,26 +41,92 @@ const (
 // ProxyPassword optionally overrides the upstream credential taken from the
 // share link (uuid for VLESS/VMess, password for Trojan/Shadowsocks/...).
 type LinkOptions struct {
-	Name          string `json:"name"`
-	Select        *bool  `json:"select"`
-	LocalProxy    *bool  `json:"local_proxy"`
-	Username      string `json:"username"`
-	Password      string `json:"password"`
-	ProxyPassword string `json:"proxy_password"`
+	Name          string
+	Select        *bool
+	LocalProxy    *bool
+	Username      string
+	Password      string
+	ProxyPassword string
 }
 
-// SpeedOptions maps the JSON options accepted by speed tests.
+// SpeedOptions configures a throughput test.
 type SpeedOptions struct {
-	URL       string `json:"url"`
-	Bytes     int64  `json:"bytes"`
-	TimeoutMS int    `json:"timeout_ms"`
+	URL       string
+	Bytes     int64
+	TimeoutMS int
 }
 
-// ExitIPOptions maps the JSON options accepted by exit-IP lookups.
+// ExitIPFormat selects how an exit-IP response is decoded.
+type ExitIPFormat int
+
+const (
+	ExitIPFormatText ExitIPFormat = iota
+	ExitIPFormatJSON
+)
+
+// ExitIPOptions configures an exit-IP lookup.
 type ExitIPOptions struct {
-	URL       string `json:"url"`
-	Format    string `json:"format"`
-	TimeoutMS int    `json:"timeout_ms"`
+	URL       string
+	Format    ExitIPFormat
+	TimeoutMS int
+}
+
+// LinkDescription is the public description of a SharedVPNLink.
+type LinkDescription struct {
+	ID       uint64
+	Name     string
+	Link     string
+	Type     string
+	Server   string
+	Port     int
+	Username string
+	Password string
+	Socks    string
+	Selected bool
+}
+
+// PingResult is the outcome of a latency test through one link.
+type PingResult struct {
+	LinkID uint64
+	Name   string
+	URL    string
+	Delay  uint16
+}
+
+// SpeedResult is the outcome of a throughput test through one link.
+type SpeedResult struct {
+	LinkID         uint64
+	Name           string
+	URL            string
+	Status         int
+	Bytes          int64
+	Seconds        float64
+	BytesPerSecond float64
+	MBPS           float64
+}
+
+// ExitIPResult is the outcome of an exit-IP lookup through one link.
+type ExitIPResult struct {
+	LinkID uint64
+	Name   string
+	URL    string
+	Status int
+	IP     string
+	Valid  bool
+	Raw    string
+}
+
+// PingOutcome is one item of a concurrent multi-link ping.
+type PingOutcome struct {
+	LinkID uint64
+	Name   string
+	Delay  uint16
+	Err    error
+}
+
+// PingManyResult is the outcome of a concurrent multi-link ping.
+type PingManyResult struct {
+	Outcomes []PingOutcome
 }
 
 // SharedLink is the server-side representation of a SharedVPNLink handle.
@@ -74,6 +140,7 @@ type SharedLink struct {
 	Username string
 	Password string
 	Socks    string
+	closing  bool
 
 	listener io.Closer
 }
@@ -264,14 +331,34 @@ func (c *Core) CreateLink(link string, opts LinkOptions) (*SharedLink, error) {
 	return shared, nil
 }
 
-// DestroyLink removes a link, its proxy and its local SOCKS endpoint.
+// DestroyLink removes a link, its proxy and its local SOCKS endpoint. Async
+// tasks that reference the link are cancelled and awaited first.
 func (c *Core) DestroyLink(id uint64) error {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return ErrClosed
+	}
+	link, ok := c.links[id]
+	if !ok {
+		c.mu.Unlock()
+		return fmt.Errorf("link %d not found", id)
+	}
+	if link.closing {
+		c.mu.Unlock()
+		return fmt.Errorf("link %d is being destroyed", id)
+	}
+	link.closing = true
+	c.mu.Unlock()
+
+	c.tasks.cancelLinks(id)
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return ErrClosed
 	}
-	link, ok := c.links[id]
+	link, ok = c.links[id]
 	if !ok {
 		return fmt.Errorf("link %d not found", id)
 	}
@@ -295,7 +382,7 @@ func (c *Core) DestroyLink(id uint64) error {
 }
 
 // LinkInfo returns the public description of a link.
-func (c *Core) LinkInfo(id uint64) (map[string]any, error) {
+func (c *Core) LinkInfo(id uint64) (*LinkDescription, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.closed {
@@ -305,28 +392,22 @@ func (c *Core) LinkInfo(id uint64) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("link %d not found", id)
 	}
-	return map[string]any{
-		"link_id":  link.ID,
-		"name":     link.Name,
-		"type":     link.Type,
-		"server":   link.Server,
-		"port":     link.Port,
-		"link":     link.Link,
-		"selected": c.selected == link.Name,
-		"socks": map[string]any{
-			"addr":     link.Socks,
-			"username": link.Username,
-			"password": link.Password,
-		},
-		"auth": map[string]any{
-			"username": link.Username,
-			"password": link.Password,
-		},
+	return &LinkDescription{
+		ID:       link.ID,
+		Name:     link.Name,
+		Link:     link.Link,
+		Type:     link.Type,
+		Server:   link.Server,
+		Port:     link.Port,
+		Username: link.Username,
+		Password: link.Password,
+		Socks:    link.Socks,
+		Selected: c.selected == link.Name,
 	}, nil
 }
 
 // ListLinks returns all live links.
-func (c *Core) ListLinks() ([]map[string]any, error) {
+func (c *Core) ListLinks() ([]LinkDescription, error) {
 	c.mu.RLock()
 	if c.closed {
 		c.mu.RUnlock()
@@ -339,11 +420,11 @@ func (c *Core) ListLinks() ([]map[string]any, error) {
 	c.mu.RUnlock()
 
 	sortUint64(ids)
-	out := make([]map[string]any, 0, len(ids))
+	out := make([]LinkDescription, 0, len(ids))
 	for _, id := range ids {
 		info, err := c.LinkInfo(id)
 		if err == nil {
-			out = append(out, info)
+			out = append(out, *info)
 		}
 	}
 	return out, nil
@@ -358,6 +439,9 @@ func (c *Core) linkProxy(id uint64) (*SharedLink, C.Proxy, error) {
 	link, ok := c.links[id]
 	if !ok {
 		return nil, nil, fmt.Errorf("link %d not found", id)
+	}
+	if link.closing {
+		return nil, nil, fmt.Errorf("link %d is being destroyed", id)
 	}
 	proxy, ok := tunnel.Proxies()[link.Name]
 	if !ok {
@@ -376,11 +460,11 @@ func (c *Core) linkByName(name string) (*SharedLink, bool) {
 }
 
 // LinkPing measures HTTP latency by sending traffic through the link's proxy.
-func (c *Core) LinkPing(id uint64, opts DelayOptions) (map[string]any, error) {
+func (c *Core) LinkPing(id uint64, opts DelayOptions) (*PingResult, error) {
 	return c.linkPingContext(context.Background(), id, opts)
 }
 
-func (c *Core) linkPingContext(ctx context.Context, id uint64, opts DelayOptions) (map[string]any, error) {
+func (c *Core) linkPingContext(ctx context.Context, id uint64, opts DelayOptions) (*PingResult, error) {
 	resolved, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -397,42 +481,20 @@ func (c *Core) linkPingContext(ctx context.Context, id uint64, opts DelayOptions
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
-		"link_id": id,
-		"name":    link.Name,
-		"delay":   delay,
-		"url":     resolved.url,
-		"mode":    "proxy",
+	return &PingResult{
+		LinkID: id,
+		Name:   link.Name,
+		Delay:  delay,
+		URL:    resolved.url,
 	}, nil
 }
 
-// LinkPingMS is the numeric form of LinkPing: it returns the delay in
-// milliseconds and nothing else.
-func (c *Core) LinkPingMS(id uint64, opts DelayOptions) (int, error) {
-	result, err := c.LinkPing(id, opts)
-	if err != nil {
-		return 0, err
-	}
-	switch value := result["delay"].(type) {
-	case uint16:
-		return int(value), nil
-	case int:
-		return value, nil
-	case int64:
-		return int(value), nil
-	case float64:
-		return int(value), nil
-	default:
-		return 0, errors.New("delay value is missing")
-	}
-}
-
 // LinkSpeed downloads data through the link's proxy and reports throughput.
-func (c *Core) LinkSpeed(id uint64, opts SpeedOptions) (map[string]any, error) {
+func (c *Core) LinkSpeed(id uint64, opts SpeedOptions) (*SpeedResult, error) {
 	return c.linkSpeedContext(context.Background(), id, opts)
 }
 
-func (c *Core) linkSpeedContext(ctx context.Context, id uint64, opts SpeedOptions) (map[string]any, error) {
+func (c *Core) linkSpeedContext(ctx context.Context, id uint64, opts SpeedOptions) (*SpeedResult, error) {
 	limit := opts.Bytes
 	if limit <= 0 {
 		limit = defaultSpeedBytes
@@ -476,25 +538,25 @@ func (c *Core) linkSpeedContext(ctx context.Context, id uint64, opts SpeedOption
 	}
 	seconds := elapsed.Seconds()
 	bytesPerSecond := float64(written) / seconds
-	return map[string]any{
-		"link_id":          id,
-		"name":             link.Name,
-		"url":              url,
-		"status":           resp.StatusCode,
-		"bytes":            written,
-		"seconds":          seconds,
-		"bytes_per_second": bytesPerSecond,
-		"mbps":             bytesPerSecond * 8 / 1_000_000,
+	return &SpeedResult{
+		LinkID:         id,
+		Name:           link.Name,
+		URL:            url,
+		Status:         resp.StatusCode,
+		Bytes:          written,
+		Seconds:        seconds,
+		BytesPerSecond: bytesPerSecond,
+		MBPS:           bytesPerSecond * 8 / 1_000_000,
 	}, nil
 }
 
 // LinkExitIP resolves the exit IP by requesting an echo service through the
 // link's proxy.
-func (c *Core) LinkExitIP(id uint64, opts ExitIPOptions) (map[string]any, error) {
+func (c *Core) LinkExitIP(id uint64, opts ExitIPOptions) (*ExitIPResult, error) {
 	return c.linkExitIPContext(context.Background(), id, opts)
 }
 
-func (c *Core) linkExitIPContext(ctx context.Context, id uint64, opts ExitIPOptions) (map[string]any, error) {
+func (c *Core) linkExitIPContext(ctx context.Context, id uint64, opts ExitIPOptions) (*ExitIPResult, error) {
 	timeout := durationFromMS(opts.TimeoutMS, 10*time.Second, 60*time.Second)
 	url := opts.URL
 	if url == "" {
@@ -527,12 +589,12 @@ func (c *Core) linkExitIPContext(ctx context.Context, id uint64, opts ExitIPOpti
 	raw := strings.TrimSpace(string(body))
 	ip := raw
 	valid := false
-	switch strings.ToLower(opts.Format) {
-	case "", "text":
+	switch opts.Format {
+	case ExitIPFormatText:
 		if _, err := netip.ParseAddr(raw); err == nil {
 			valid = true
 		}
-	case "json":
+	case ExitIPFormatJSON:
 		var payload map[string]any
 		if err := json.Unmarshal(body, &payload); err != nil {
 			return nil, fmt.Errorf("parse json response: %w", err)
@@ -547,54 +609,57 @@ func (c *Core) linkExitIPContext(ctx context.Context, id uint64, opts ExitIPOpti
 			valid = true
 		}
 	default:
-		return nil, fmt.Errorf("unsupported format %q", opts.Format)
+		return nil, fmt.Errorf("unsupported exit ip format %d", opts.Format)
 	}
 
-	result := map[string]any{
-		"link_id": id,
-		"name":    link.Name,
-		"url":     url,
-		"status":  resp.StatusCode,
-		"ip":      ip,
-		"valid":   valid,
+	result := &ExitIPResult{
+		LinkID: id,
+		Name:   link.Name,
+		URL:    url,
+		Status: resp.StatusCode,
+		IP:     ip,
+		Valid:  valid,
 	}
 	if !valid {
-		result["raw"] = raw
+		result.Raw = raw
 	}
 	return result, nil
 }
 
 // LinkPingAsync schedules a ping for one link.
-func (c *Core) LinkPingAsync(id uint64, opts DelayOptions, cb func(int64, []byte)) int64 {
-	return c.tasks.start(func(ctx context.Context) (any, error) {
+func (c *Core) LinkPingAsync(id uint64, opts DelayOptions, cb func(TaskSnapshot)) int64 {
+	return c.tasks.start(TaskKindLinkPing, []uint64{id}, func(ctx context.Context) (any, error) {
 		return c.linkPingContext(ctx, id, opts)
 	}, cb)
 }
 
 // LinkSpeedAsync schedules a speed test for one link.
-func (c *Core) LinkSpeedAsync(id uint64, opts SpeedOptions, cb func(int64, []byte)) int64 {
-	return c.tasks.start(func(ctx context.Context) (any, error) {
+func (c *Core) LinkSpeedAsync(id uint64, opts SpeedOptions, cb func(TaskSnapshot)) int64 {
+	return c.tasks.start(TaskKindLinkSpeed, []uint64{id}, func(ctx context.Context) (any, error) {
 		return c.linkSpeedContext(ctx, id, opts)
 	}, cb)
 }
 
 // LinkExitIPAsync schedules an exit-IP lookup for one link.
-func (c *Core) LinkExitIPAsync(id uint64, opts ExitIPOptions, cb func(int64, []byte)) int64 {
-	return c.tasks.start(func(ctx context.Context) (any, error) {
+func (c *Core) LinkExitIPAsync(id uint64, opts ExitIPOptions, cb func(TaskSnapshot)) int64 {
+	return c.tasks.start(TaskKindLinkExitIP, []uint64{id}, func(ctx context.Context) (any, error) {
 		return c.linkExitIPContext(ctx, id, opts)
 	}, cb)
 }
 
 // PingMany runs ping tests for all given links concurrently.
-func (c *Core) PingMany(ids []uint64, opts DelayOptions) (map[string]any, error) {
+func (c *Core) PingMany(ids []uint64, opts DelayOptions) (*PingManyResult, error) {
 	return c.pingManyContext(context.Background(), ids, opts)
 }
 
-func (c *Core) pingManyContext(ctx context.Context, ids []uint64, opts DelayOptions) (map[string]any, error) {
+func (c *Core) pingManyContext(ctx context.Context, ids []uint64, opts DelayOptions) (*PingManyResult, error) {
 	if _, err := opts.resolve(); err != nil {
 		return nil, err
 	}
-	results := make([]any, len(ids))
+	if len(ids) == 0 {
+		return nil, errors.New("links array is empty")
+	}
+	outcomes := make([]PingOutcome, len(ids))
 	var wg sync.WaitGroup
 	for i, id := range ids {
 		wg.Add(1)
@@ -602,24 +667,23 @@ func (c *Core) pingManyContext(ctx context.Context, ids []uint64, opts DelayOpti
 			defer wg.Done()
 			value, err := c.linkPingContext(ctx, linkID, opts)
 			if err != nil {
-				results[index] = map[string]any{
-					"link_id": linkID,
-					"ok":      false,
-					"error":   err.Error(),
-				}
+				outcomes[index] = PingOutcome{LinkID: linkID, Err: err}
 				return
 			}
-			value["ok"] = true
-			results[index] = value
+			outcomes[index] = PingOutcome{
+				LinkID: linkID,
+				Name:   value.Name,
+				Delay:  value.Delay,
+			}
 		}(i, id)
 	}
 	wg.Wait()
-	return map[string]any{"results": results, "count": len(ids)}, nil
+	return &PingManyResult{Outcomes: outcomes}, nil
 }
 
 // PingManyAsync schedules a concurrent ping of several links.
-func (c *Core) PingManyAsync(ids []uint64, opts DelayOptions, cb func(int64, []byte)) int64 {
-	return c.tasks.start(func(ctx context.Context) (any, error) {
+func (c *Core) PingManyAsync(ids []uint64, opts DelayOptions, cb func(TaskSnapshot)) int64 {
+	return c.tasks.start(TaskKindPingMany, ids, func(ctx context.Context) (any, error) {
 		return c.pingManyContext(ctx, ids, opts)
 	}, cb)
 }
@@ -696,16 +760,4 @@ func sortUint64(values []uint64) {
 			values[j], values[j-1] = values[j-1], values[j]
 		}
 	}
-}
-
-// ParseLinkIDs decodes a JSON array of link ids.
-func ParseLinkIDs(raw string) ([]uint64, error) {
-	var ids []uint64
-	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
-		return nil, fmt.Errorf("links must be a JSON array of link ids: %w", err)
-	}
-	if len(ids) == 0 {
-		return nil, errors.New("links array is empty")
-	}
-	return ids, nil
 }

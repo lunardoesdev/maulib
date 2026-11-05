@@ -27,29 +27,29 @@ var reservedNames = map[string]bool{
 	GroupName:     true,
 }
 
-// AddOptions maps the JSON options accepted by milib_add_proxy.
+// AddOptions configures milib_add_proxy.
 type AddOptions struct {
-	Name           string `json:"name"`
-	Select         *bool  `json:"select"`
-	SkipCertVerify bool   `json:"skip_cert_verify"`
+	Name           string
+	Select         *bool
+	SkipCertVerify bool
 }
 
 // ProxyInfo is the public description of a proxy group member.
 type ProxyInfo struct {
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Server      string `json:"server,omitempty"`
-	Port        int    `json:"port,omitempty"`
-	Source      string `json:"source"`
-	Alive       bool   `json:"alive"`
-	Delay       uint16 `json:"delay"`
-	LastTestURL string `json:"last_test_url,omitempty"`
+	Name        string
+	Type        string
+	Server      string
+	Port        int
+	Source      string
+	Alive       bool
+	Delay       uint16
+	LastTestURL string
 }
 
 // AddResult is returned by Add.
 type AddResult struct {
-	Added    []ProxyInfo `json:"added"`
-	Selected string      `json:"selected"`
+	Added    []ProxyInfo
+	Selected string
 }
 
 type stateSnapshot struct {
@@ -248,12 +248,18 @@ func (c *Core) Select(group, name string) error {
 	return nil
 }
 
+// ProxyList is the current membership of the MILIB group.
+type ProxyList struct {
+	Selected string
+	Proxies  []ProxyInfo
+}
+
 // List returns the current MILIB group members.
-func (c *Core) List() map[string]any {
+func (c *Core) List() (*ProxyList, error) {
 	c.mu.RLock()
 	if c.closed {
 		c.mu.RUnlock()
-		return map[string]any{"ok": false, "error": ErrClosed.Error()}
+		return nil, ErrClosed
 	}
 	members := c.groupMembersLocked()
 	selected := c.selected
@@ -266,12 +272,7 @@ func (c *Core) List() map[string]any {
 	if selected == "" {
 		selected = currentSelection()
 	}
-	return map[string]any{
-		"ok":       true,
-		"group":    GroupName,
-		"selected": selected,
-		"proxies":  infos,
-	}
+	return &ProxyList{Selected: selected, Proxies: infos}, nil
 }
 
 func (c *Core) groupMembersLocked() []C.Proxy {

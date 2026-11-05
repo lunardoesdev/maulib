@@ -22,6 +22,7 @@ build:
 test: test-unit test-links test-c test-e2e test-e2e-links
 
 test-unit: build
+	$(GO) test ./internal/...
 	$(PYTHON) tests/python/test_api.py
 
 test-links: build

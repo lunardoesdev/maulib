@@ -55,18 +55,24 @@ Python-проект, а не Go-ядро. Тег `v1.19.33` содержит к�
 ```text
 milib/
 ├── cmd/milib/              package main, cgo, //export
-│   ├── main.go
-│   ├── api.go
+│   ├── main.go             lifecycle, proxy management
+│   ├── api.go              delay tests, tasks
+│   ├── link.go             SharedVPNLink
+│   ├── log.go              log callback bridge
+│   ├── convert.go          C struct <-> Go conversion
 │   ├── bridge.h
 │   └── bridge.c            C-trampoline для callback'ов
 ├── internal/core/
 │   ├── core.go             lifecycle, состояние, блокировки
 │   ├── config.go           базовая конфигурация
 │   ├── proxies.go          add/remove/list/select
+│   ├── link.go             SharedVPNLink
 │   ├── group.go            пересборка MILIB/GLOBAL
 │   ├── delay.go            URLTest sync/async
 │   └── tasks.go            реестр задач, отмена, TTL
-├── include/milib.h
+├── include/
+│   ├── milib.h             публичные функции
+│   └── milib_types.h       общие структуры ABI
 ├── tests/
 │   ├── c/test_api.c
 │   ├── python/test_api.py
@@ -191,117 +197,46 @@ Fallback: полный `executor.ApplyConfig(cfg, false)`, если меняет
 
 ### Ошибки и память
 
-- сложные операции возвращают JSON `{"ok":true,...}` / `{"ok":false,"error":"..."}`;
-- строки выделяются через `C.CString` и освобождаются `milib_free_string`;
+- функции возвращают `MILIB_OK`/`MILIB_ERR_FAILED`, текст ошибки пишется в
+  `milib_error.message` (фиксированный буфер);
+- выходные данные — структуры C; строки копируются в массивы внутри структур,
+  библиотека не выделяет память под результаты;
+- списки пишутся в буфер вызывающего кода, `count` всегда содержит полный размер;
 - все `//export`-функции оборачиваются в `recover()`;
 - panic в фоновой горутине mihomo не перехватывается — это ограничение
   in-process библиотеки.
 
-## 4. C API
+## 4. C API (v2)
 
-```c
-#ifndef MILIB_H
-#define MILIB_H
+ABI v2 — raylib-style: плоские функции, value-структуры, `load/unload` для
+списков, opaque handles, без JSON и без thread-local last-error.
 
-#include <stdint.h>
+Ключевые решения:
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+- `milib_instance*`, `milib_link*`, `milib_task*` — opaque handles;
+- операции возвращают значение/результат, ошибка лежит в нём;
+- `milib_error` с кодом и сообщением используется для `init`/`link_create`;
+- `milib_error_code` — для частых операций;
+- списки: `milib_load_proxies`/`milib_unload_proxies`,
+  `milib_load_links`/`milib_unload_links`,
+  `milib_link_ping_many`/`milib_unload_ping_many`;
+- async: callback или `milib_task_poll`, отмена через `milib_task_cancel`,
+  освобождение через `milib_task_destroy`;
+- `milib_link_destroy` отменяет и ждёт задачи ссылки;
+- `milib_close` отменяет и ждёт все задачи инстанса;
+- log callback через `milib_set_log_callback`.
 
-typedef uint64_t milib_handle;
+Основные группы функций:
 
-typedef void (*milib_task_cb)(int64_t task_id,
-                              const char* result_json,
-                              void* user);
-
-int   milib_init(const char* home_dir,
-                 const char* config_yaml,
-                 const char* options_json,
-                 milib_handle* out_handle,
-                 char** out_error);
-
-void  milib_shutdown(milib_handle h);
-
-char* milib_add_proxy(milib_handle h,
-                      const char* link_or_blob,
-                      const char* options_json);
-
-char* milib_remove_proxy(milib_handle h, const char* name);
-char* milib_list_proxies(milib_handle h);
-char* milib_select(milib_handle h, const char* group, const char* name);
-char* milib_status(milib_handle h);
-
-char* milib_test_delay(milib_handle h,
-                       const char* name,
-                       const char* options_json);
-
-char* milib_test_link(milib_handle h,
-                      const char* link,
-                      const char* options_json);
-
-int64_t milib_test_delay_async(milib_handle h,
-                               const char* name,
-                               const char* options_json,
-                               milib_task_cb cb,
-                               void* user);
-
-char* milib_task_poll(milib_handle h, int64_t task_id);
-void  milib_task_free(milib_handle h, int64_t task_id);
-int   milib_task_cancel(milib_handle h, int64_t task_id);
-
-const char* milib_version(void);
-void        milib_free_string(char* p);
-
-#ifdef __cplusplus
-}
-#endif
-#endif
-```
-
-### JSON-схемы
-
-`milib_init` options:
-
-```json
-{ "mixed_port": 0, "log_level": "warning" }
-```
-
-`milib_add_proxy` options:
-
-```json
-{ "name": "custom-name", "select": true, "skip_cert_verify": false }
-```
-
-`milib_test_delay` options:
-
-```json
-{ "url": "https://www.gstatic.com/generate_204",
-  "timeout_ms": 5000,
-  "expected": "204" }
-```
-
-`milib_list_proxies`:
-
-```json
-{ "ok": true, "group": "MILIB", "selected": "node-1",
-  "proxies": [
-    { "name": "node-1", "type": "VLESS",
-      "server": "example.com", "port": 443,
-      "source": "link", "alive": true,
-      "delay": 123, "last_test_url": "https://www.gstatic.com/generate_204" }
-  ] }
-```
-
-`milib_status`:
-
-```json
-{ "ok": true, "version": "0.1.0", "mihomo_version": "v1.19.33",
-  "running": true, "mode": "rule",
-  "mixed_port": 34567, "socks_port": 0, "http_port": 0,
-  "proxies": 3, "goroutines": 42, "rss_bytes": 73400320,
-  "uptime_ms": 120000 }
-```
+- lifecycle: `milib_init`, `milib_close`, `milib_get_status`;
+- proxy management: `milib_add_proxy`, `milib_remove_proxy`,
+  `milib_select_proxy`, `milib_load_proxies`;
+- latency: `milib_test_delay`, `milib_test_link`, `milib_link_ping`;
+- `SharedVPNLink`: `milib_link_create`, `milib_link_destroy`,
+  `milib_link_get_info`, `milib_link_ping`, `milib_link_speed`,
+  `milib_link_exit_ip`;
+- async: `milib_*_async`, `milib_task_poll`, `milib_task_cancel`,
+  `milib_task_destroy`.
 
 ## 5. Сборка
 

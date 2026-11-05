@@ -2,27 +2,54 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"time"
 )
 
-const (
-	taskRunning   = "running"
-	taskDone      = "done"
-	taskCancelled = "cancelled"
+// TaskKind identifies the operation that produced a task result.
+type TaskKind int
 
-	taskTTL = 10 * time.Minute
+const (
+	TaskKindUnknown TaskKind = iota
+	TaskKindDelay
+	TaskKindTestLink
+	TaskKindLinkPing
+	TaskKindLinkSpeed
+	TaskKindLinkExitIP
+	TaskKindPingMany
 )
 
+// TaskStatus is the lifecycle state of an asynchronous task.
+type TaskStatus int
+
+const (
+	TaskRunning TaskStatus = iota
+	TaskDone
+	TaskCancelled
+)
+
+// TaskSnapshot is an immutable view of an asynchronous task.
+type TaskSnapshot struct {
+	ID     int64
+	Kind   TaskKind
+	Status TaskStatus
+	Value  any
+	Err    error
+}
+
+const taskTTL = 10 * time.Minute
+
 type task struct {
-	id     int64
-	cancel context.CancelFunc
-	done   chan struct{}
+	id      int64
+	kind    TaskKind
+	linkIDs []uint64
+	cancel  context.CancelFunc
+	done    chan struct{}
 
 	mu       sync.Mutex
-	status   string
-	result   []byte
+	status   TaskStatus
+	value    any
+	err      error
 	finished time.Time
 }
 
@@ -38,7 +65,7 @@ func newTaskStore() *taskStore {
 	return &taskStore{tasks: make(map[int64]*task)}
 }
 
-func (s *taskStore) start(run func(context.Context) (any, error), cb func(int64, []byte)) int64 {
+func (s *taskStore) start(kind TaskKind, linkIDs []uint64, run func(context.Context) (any, error), cb func(TaskSnapshot)) int64 {
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -49,10 +76,12 @@ func (s *taskStore) start(run func(context.Context) (any, error), cb func(int64,
 	id := s.next
 	ctx, cancel := context.WithCancel(context.Background())
 	t := &task{
-		id:     id,
-		cancel: cancel,
-		done:   make(chan struct{}),
-		status: taskRunning,
+		id:      id,
+		kind:    kind,
+		linkIDs: append([]uint64(nil), linkIDs...),
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		status:  TaskRunning,
 	}
 	s.tasks[id] = t
 	s.wg.Add(1)
@@ -63,87 +92,54 @@ func (s *taskStore) start(run func(context.Context) (any, error), cb func(int64,
 		defer cancel()
 
 		value, err := run(ctx)
-		status := taskDone
+		status := TaskDone
 		if ctx.Err() == context.Canceled {
-			status = taskCancelled
-		}
-
-		var payload map[string]any
-		if err != nil {
-			payload = map[string]any{"ok": false, "error": err.Error()}
-			if status == taskCancelled {
-				payload["cancelled"] = true
-			}
-		} else {
-			payload = map[string]any{"ok": true}
-			switch v := value.(type) {
-			case map[string]any:
-				for k, item := range v {
-					payload[k] = item
-				}
-			default:
-				payload["result"] = v
-			}
-		}
-		encoded, marshalErr := json.Marshal(payload)
-		if marshalErr != nil {
-			encoded = []byte(`{"ok":false,"error":"encode task result"}`)
+			status = TaskCancelled
 		}
 
 		t.mu.Lock()
 		t.status = status
-		t.result = encoded
+		t.value = value
+		t.err = err
 		t.finished = time.Now()
+		snapshot := TaskSnapshot{ID: id, Kind: kind, Status: status, Value: value, Err: err}
 		t.mu.Unlock()
-		close(t.done)
 
+		// The callback runs before done is closed so that FreeTask and
+		// cancelLinks wait for the callback to finish as well.
 		if cb != nil {
-			cb(id, encoded)
+			cb(snapshot)
 		}
+		close(t.done)
 	}()
 
 	return id
 }
 
-func (s *taskStore) poll(id int64) ([]byte, bool) {
+func (s *taskStore) poll(id int64) (TaskSnapshot, bool) {
 	s.mu.Lock()
 	s.sweepLocked(time.Now())
 	t := s.tasks[id]
 	s.mu.Unlock()
 	if t == nil {
-		return nil, false
+		return TaskSnapshot{}, false
 	}
 
 	t.mu.Lock()
-	status := t.status
-	result := append([]byte(nil), t.result...)
-	t.mu.Unlock()
-
-	if status == taskRunning {
-		out, _ := json.Marshal(map[string]any{
-			"ok":      true,
-			"task_id": id,
-			"status":  taskRunning,
-		})
-		return out, true
+	snapshot := TaskSnapshot{
+		ID:     id,
+		Kind:   t.kind,
+		Status: t.status,
+		Value:  t.value,
+		Err:    t.err,
 	}
-
-	out, _ := json.Marshal(map[string]any{
-		"ok":      true,
-		"task_id": id,
-		"status":  status,
-		"result":  json.RawMessage(result),
-	})
-	return out, true
+	t.mu.Unlock()
+	return snapshot, true
 }
 
-// PollTask returns the JSON state of an async task.
-func (c *Core) PollTask(id int64) (string, bool) {
-	data, ok := c.tasks.poll(id)
-	if !ok {
-		return "", false
-	}
-	return string(data), true
+// PollTask returns the current state of an async task.
+func (c *Core) PollTask(id int64) (TaskSnapshot, bool) {
+	return c.tasks.poll(id)
 }
 
 // CancelTask cancels a running async task.
@@ -183,13 +179,45 @@ func (s *taskStore) free(id int64) bool {
 	return true
 }
 
+// cancelLinks cancels every task that references at least one of the given
+// links and waits for those tasks to finish. It must not be called from a task
+// callback of the same link.
+func (s *taskStore) cancelLinks(ids ...uint64) {
+	if len(ids) == 0 {
+		return
+	}
+	wanted := make(map[uint64]bool, len(ids))
+	for _, id := range ids {
+		wanted[id] = true
+	}
+
+	s.mu.Lock()
+	var tasks []*task
+	for _, t := range s.tasks {
+		for _, linkID := range t.linkIDs {
+			if wanted[linkID] {
+				tasks = append(tasks, t)
+				break
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	for _, t := range tasks {
+		t.cancel()
+	}
+	for _, t := range tasks {
+		<-t.done
+	}
+}
+
 func (s *taskStore) sweepLocked(now time.Time) {
 	for id, t := range s.tasks {
 		t.mu.Lock()
 		finished := t.finished
 		status := t.status
 		t.mu.Unlock()
-		if status != taskRunning && !finished.IsZero() && now.Sub(finished) > taskTTL {
+		if status != TaskRunning && !finished.IsZero() && now.Sub(finished) > taskTTL {
 			delete(s.tasks, id)
 		}
 	}

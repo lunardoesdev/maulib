@@ -24,72 +24,78 @@ static void expect(int condition, const char *what, const char *detail) {
 }
 
 int main(void) {
-    milib_handle handle = 0;
-    char *error = NULL;
+    expect(milib_abi_version() == MILIB_ABI_VERSION, "abi version", "");
+    expect(strcmp(milib_version(), "0.2.0") == 0, "version", milib_version());
 
-    expect(strcmp(milib_version(), "0.1.0") == 0, "version", milib_version());
-
-    int rc = milib_init(NULL, NULL, "{\"mixed_port\":0}", &handle, &error);
-    if (rc != 0) {
-        printf("FAIL  init  %s\n", error ? error : "unknown");
-        milib_free_string(error);
+    milib_config config = milib_config_default();
+    milib_init_result init = milib_init(&config);
+    expect(init.instance != NULL && init.error.code == MILIB_ERROR_NONE,
+           "init", init.error.message);
+    if (init.instance == NULL) {
         return 1;
     }
-    expect(rc == 0 && handle != 0, "init", "");
+    milib_instance *instance = init.instance;
 
-    char *status = milib_status(handle);
-    expect(status && strstr(status, "\"ok\":true"), "status ok", status);
-    milib_free_string(status);
+    milib_status_info status = milib_get_status(instance);
+    expect(status.ok && status.running, "status ok", "");
 
     const char *link =
         "vless://11111111-2222-3333-4444-555555555555@127.0.0.1:1"
         "?encryption=none&security=none&type=tcp#c-dead-node";
-    char *added = milib_add_proxy(handle, link, NULL);
-    expect(added && strstr(added, "\"ok\":true") && strstr(added, "c-dead-node"),
-           "add proxy", added);
-    milib_free_string(added);
 
-    char *listed = milib_list_proxies(handle);
-    expect(listed && strstr(listed, "c-dead-node"), "list proxies", listed);
-    milib_free_string(listed);
+    milib_add_options add_options = milib_add_options_default();
+    milib_error_code rc = milib_add_proxy(instance, link, &add_options);
+    expect(rc == MILIB_ERROR_NONE, "add proxy", "");
 
-    char *selected = milib_select(handle, NULL, "DIRECT");
-    expect(selected && strstr(selected, "\"ok\":true"), "select DIRECT", selected);
-    milib_free_string(selected);
-
-    char *removed = milib_remove_proxy(handle, "c-dead-node");
-    expect(removed && strstr(removed, "\"ok\":true"), "remove proxy", removed);
-    milib_free_string(removed);
-
-    char *missing = milib_remove_proxy(handle, "nope");
-    expect(missing && strstr(missing, "\"ok\":false"), "remove missing fails", missing);
-    milib_free_string(missing);
-
-    /* SharedVPNLink API. */
-    char *link_error = NULL;
-    milib_link *vpn = milib_link_create(handle, link, NULL, &link_error);
-    expect(vpn != NULL, "link create", link_error ? link_error : "");
-    if (link_error) {
-        milib_free_string(link_error);
+    milib_proxy_list proxies = milib_load_proxies(instance);
+    int found = 0;
+    for (size_t i = 0; i < proxies.count; i++) {
+        if (strcmp(proxies.items[i].name, "c-dead-node") == 0) {
+            found = 1;
+            break;
+        }
     }
-    if (vpn != NULL) {
-        char *info = milib_link_info(vpn);
-        expect(info && strstr(info, "\"ok\":true") && strstr(info, "socks"),
-               "link info", info);
-        milib_free_string(info);
+    expect(proxies.ok && found, "load proxies", "");
+    expect(strcmp(proxies.selected, "c-dead-node") == 0,
+           "added proxy is selected", proxies.selected);
+    milib_unload_proxies(proxies);
 
-        char *links = milib_link_list(handle);
-        expect(links && strstr(links, "\"count\":1"), "link list", links);
-        milib_free_string(links);
+    expect(milib_select_proxy(instance, "DIRECT") == MILIB_ERROR_NONE,
+           "select DIRECT", "");
 
-        expect(milib_link_destroy(vpn) == 0, "link destroy", "");
+    expect(milib_remove_proxy(instance, "c-dead-node") == MILIB_ERROR_NONE,
+           "remove proxy", "");
+    expect(milib_remove_proxy(instance, "nope") != MILIB_ERROR_NONE,
+           "remove missing fails", "");
 
-        char *after = milib_link_list(handle);
-        expect(after && strstr(after, "\"count\":0"), "link list after destroy", after);
-        milib_free_string(after);
+    milib_link_options link_options = milib_link_options_default();
+    milib_link_result created = milib_link_create(instance, link, &link_options);
+    expect(created.link != NULL && created.error.code == MILIB_ERROR_NONE,
+           "link create", created.error.message);
+    if (created.link != NULL) {
+        milib_link *vpn = created.link;
+
+        milib_link_info info = milib_link_get_info(vpn);
+        expect(info.ok && info.id > 0 && strcmp(info.name, "c-dead-node") == 0 &&
+                   info.socks_addr[0] != '\0',
+               "link info", "");
+        expect(strcmp(info.socks_username, "milib") == 0 &&
+                   strlen(info.socks_password) >= 16,
+               "link info has auth", info.socks_password);
+
+        milib_link_list links = milib_load_links(instance);
+        expect(links.ok && links.count == 1 && links.items[0].id == info.id,
+               "load links", "");
+        milib_unload_links(links);
+
+        milib_link_destroy(vpn);
+
+        links = milib_load_links(instance);
+        expect(links.ok && links.count == 0, "load links after destroy", "");
+        milib_unload_links(links);
     }
 
-    milib_shutdown(handle);
+    milib_close(instance);
     printf("\n%s\n", failures == 0 ? "all C tests passed" : "C tests failed");
     return failures == 0 ? 0 : 1;
 }

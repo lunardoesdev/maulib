@@ -14,14 +14,12 @@ Scenario:
   7. stop Xray: delay and traffic fail cleanly
 """
 
-import ctypes
 import json
 import os
 import socket
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import uuid
 
@@ -31,7 +29,9 @@ LIB_PATH = os.environ.get("MILIB_LIB", os.path.join(ROOT, "dist", "libmilib.so")
 XRAY_BIN = os.environ.get("XRAY_BIN", "/tmp/opencode/xray/xray")
 
 sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(ROOT, "tests", "python"))
 import target_204  # noqa: E402
+from test_api import Milib  # noqa: E402
 
 PASSED = []
 FAILED = []
@@ -83,109 +83,21 @@ def curl_through(mixed_port, url, timeout=10):
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 
-class Lib:
-    def __init__(self, path=LIB_PATH):
-        self.lib = ctypes.CDLL(path)
-        self.lib.milib_version.restype = ctypes.c_char_p
-        self.lib.milib_free_string.argtypes = [ctypes.c_void_p]
-        self.lib.milib_free_string.restype = None
-        self.lib.milib_init.argtypes = [
-            ctypes.c_char_p,
-            ctypes.c_char_p,
-            ctypes.c_char_p,
-            ctypes.POINTER(ctypes.c_uint64),
-            ctypes.POINTER(ctypes.c_char_p),
-        ]
-        self.lib.milib_init.restype = ctypes.c_int
-        for name in (
-            "milib_add_proxy",
-            "milib_remove_proxy",
-            "milib_list_proxies",
-            "milib_select",
-            "milib_status",
-            "milib_test_delay",
-            "milib_test_link",
-            "milib_task_poll",
-        ):
-            getattr(self.lib, name).restype = ctypes.c_void_p
-        self.lib.milib_test_delay_async.argtypes = [
-            ctypes.c_uint64,
-            ctypes.c_char_p,
-            ctypes.c_char_p,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-        ]
-        self.lib.milib_test_delay_async.restype = ctypes.c_int64
-        self.lib.milib_shutdown.argtypes = [ctypes.c_uint64]
-        self.lib.milib_shutdown.restype = None
-        self.handle = ctypes.c_uint64(0)
-
-    def _take(self, ptr):
-        if not ptr:
-            return None
-        try:
-            raw = ctypes.cast(ptr, ctypes.c_char_p).value
-            return json.loads(raw.decode("utf-8")) if raw else None
-        finally:
-            self.lib.milib_free_string(ptr)
-
+class Lib(Milib):
     def init(self, home):
-        err = ctypes.c_char_p()
-        rc = self.lib.milib_init(
-            home.encode(),
-            None,
-            json.dumps({"mixed_port": 0, "log_level": "warning"}).encode(),
-            ctypes.byref(self.handle),
-            ctypes.byref(err),
+        return super().init(
+            home=home, options={"mixed_port": 0, "log_level": "warning"}
         )
-        if rc != 0:
-            raise RuntimeError(err.value.decode() if err.value else "init failed")
-
-    def add(self, link, options=None):
-        return self._take(
-            self.lib.milib_add_proxy(
-                self.handle,
-                link.encode(),
-                json.dumps(options).encode() if options else None,
-            )
-        )
-
-    def remove(self, name):
-        return self._take(self.lib.milib_remove_proxy(self.handle, name.encode()))
-
-    def list(self):
-        return self._take(self.lib.milib_list_proxies(self.handle))
-
-    def select(self, name):
-        return self._take(self.lib.milib_select(self.handle, None, name.encode()))
-
-    def status(self):
-        return self._take(self.lib.milib_status(self.handle))
 
     def test_link(self, link, url, expected="204", timeout_ms=5000):
-        return self._take(
-            self.lib.milib_test_link(
-                self.handle,
-                link.encode(),
-                json.dumps(
-                    {"url": url, "expected": expected, "timeout_ms": timeout_ms}
-                ).encode(),
-            )
+        return super().test_link(
+            link, {"url": url, "expected": expected, "timeout_ms": timeout_ms}
         )
 
     def delay(self, name, url, expected="204", timeout_ms=5000):
-        return self._take(
-            self.lib.milib_test_delay(
-                self.handle,
-                name.encode(),
-                json.dumps(
-                    {"url": url, "expected": expected, "timeout_ms": timeout_ms}
-                ).encode(),
-            )
+        return self.test_delay(
+            name, {"url": url, "expected": expected, "timeout_ms": timeout_ms}
         )
-
-    def shutdown(self):
-        self.lib.milib_shutdown(self.handle)
 
 
 def main():
@@ -311,31 +223,15 @@ def main():
         check("HTTP via mixed inbound returns 204", rc == 0 and code == "204", f"{rc} {code} {err}")
         check("Xray access log shows the request", after > before, f"{before} -> {after}")
 
-        # 5. async delay with callback
-        event = threading.Event()
-        box = {}
-
-        CB = ctypes.CFUNCTYPE(None, ctypes.c_int64, ctypes.c_char_p, ctypes.c_void_p)
-
-        def on_done(task_id, payload, user):
-            box["id"] = task_id
-            box["payload"] = json.loads(payload.decode()) if payload else None
-            event.set()
-
-        cb = CB(on_done)
-        task_id = api.lib.milib_test_delay_async(
-            api.handle,
-            name.encode(),
-            json.dumps({"url": target_url, "expected": "204"}).encode(),
-            cb,
-            None,
+        # 5. async delay with a typed callback
+        async_result = api.test_delay_async(
+            name, {"url": target_url, "expected": "204"}, timeout=10
         )
-        check("async task scheduled", task_id > 0, str(task_id))
-        check("async callback fired", event.wait(10), "timeout")
+        check("async task scheduled", bool(async_result.get("scheduled")), str(async_result))
         check(
             "async result ok",
-            bool(box.get("payload") and box["payload"].get("ok")),
-            str(box.get("payload")),
+            bool(async_result.get("ok")) and async_result.get("delay", 0) > 0,
+            str(async_result),
         )
 
         # 6. remove -> DIRECT

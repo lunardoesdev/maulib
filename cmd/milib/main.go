@@ -6,242 +6,306 @@ package main
 import "C"
 
 import (
-	"encoding/json"
 	"fmt"
 	"unsafe"
 
 	"milib/internal/core"
 )
 
-// main is required by -buildmode=c-shared. The library is driven through the
-// exported milib_* functions.
+// main is required by -buildmode=c-shared.
 func main() {}
 
-// milib_version returns the milib version. The returned pointer is static and
-// must not be freed.
-//
+//export milib_abi_version
+func milib_abi_version() C.int {
+	return C.MILIB_ABI_VERSION
+}
+
 //export milib_version
 func milib_version() *C.char {
 	return C.milib_version_cstr()
 }
 
-// milib_free_string releases a string returned by any milib_* function.
-//
-//export milib_free_string
-func milib_free_string(p *C.char) {
-	if p != nil {
-		C.free(unsafe.Pointer(p))
-	}
+//export milib_config_default
+func milib_config_default() (out C.milib_config) {
+	return out
 }
 
-// milib_init initializes the process-wide mihomo instance.
-//
-// Returns 0 on success and -1 on error; on error *out_error receives an
-// allocated string that must be freed with milib_free_string.
-//
 //export milib_init
-func milib_init(homeDir *C.char, configYAML *C.char, optionsJSON *C.char, outHandle *C.uint64_t, outError **C.char) (ret C.int) {
+func milib_init(config *C.milib_config) (result C.milib_init_result) {
 	defer func() {
 		if r := recover(); r != nil {
-			if outError != nil {
-				*outError = C.CString(fmt.Sprintf("panic: %v", r))
-			}
-			ret = -1
+			setCError(&result.error, fmt.Errorf("panic: %v", r))
 		}
 	}()
 
 	opts := core.InitOptions{}
-	if optionsJSON != nil {
-		if err := json.Unmarshal([]byte(C.GoString(optionsJSON)), &opts); err != nil {
-			return initError(outError, fmt.Errorf("parse options: %w", err))
+	homeDir := ""
+	configYAML := ""
+	if config != nil {
+		if config.mixed_port != 0 {
+			mixedPort := int(config.mixed_port)
+			opts.MixedPort = &mixedPort
+		}
+		opts.LogLevel = goString(config.log_level)
+		homeDir = goString(config.home_dir)
+		configYAML = goString(config.config_yaml)
+	}
+
+	_, handle, err := core.Init(homeDir, configYAML, opts)
+	if err != nil {
+		setCError(&result.error, err)
+		logError(err)
+		return result
+	}
+
+	refreshLogLevel()
+
+	instance := C.milib_instance_new(C.uint64_t(handle))
+	if instance == nil {
+		_ = core.Shutdown(handle)
+		err = fmt.Errorf("allocate instance handle")
+		setCError(&result.error, err)
+		logError(err)
+		return result
+	}
+	result.instance = instance
+	return result
+}
+
+//export milib_close
+func milib_close(instance *C.milib_instance) {
+	if instance == nil {
+		return
+	}
+	handle := uint64(C.milib_instance_get_handle(instance))
+	defer C.milib_instance_free(instance)
+	if err := core.Shutdown(handle); err != nil {
+		logError(err)
+	}
+}
+
+//export milib_get_status
+func milib_get_status(instance *C.milib_instance) (out C.milib_status_info) {
+	defer func() {
+		if r := recover(); r != nil {
+			out = C.milib_status_info{}
+			out.error = C.MILIB_ERROR_FAILED
+			logError(fmt.Errorf("panic: %v", r))
+		}
+	}()
+	if instance == nil {
+		out.error = C.MILIB_ERROR_INVALID_ARGUMENT
+		return out
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	status, err := c.Status()
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	fillStatus(&out, *status)
+	return out
+}
+
+//export milib_load_proxies
+func milib_load_proxies(instance *C.milib_instance) (out C.milib_proxy_list) {
+	defer func() {
+		if r := recover(); r != nil {
+			out = C.milib_proxy_list{}
+			out.error = C.MILIB_ERROR_FAILED
+			logError(fmt.Errorf("panic: %v", r))
+		}
+	}()
+	if instance == nil {
+		out.error = C.MILIB_ERROR_INVALID_ARGUMENT
+		return out
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	list, err := c.List()
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+
+	items, err := allocItems[C.milib_proxy_info](len(list.Proxies))
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	if items != nil {
+		slice := unsafe.Slice(items, len(list.Proxies))
+		for i, proxy := range list.Proxies {
+			fillProxyInfo(&slice[i], proxy)
 		}
 	}
-
-	home := ""
-	if homeDir != nil {
-		home = C.GoString(homeDir)
-	}
-	cfg := ""
-	if configYAML != nil {
-		cfg = C.GoString(configYAML)
-	}
-
-	c, handle, err := core.Init(home, cfg, opts)
-	if err != nil {
-		return initError(outError, err)
-	}
-	_ = c
-
-	if outHandle != nil {
-		*outHandle = C.uint64_t(handle)
-	}
-	if outError != nil {
-		*outError = nil
-	}
-	return 0
+	out.ok = true
+	out.error = C.MILIB_ERROR_NONE
+	out.items = items
+	out.count = C.size_t(len(list.Proxies))
+	copyCString(out.selected[:], list.Selected)
+	return out
 }
 
-func initError(outError **C.char, err error) C.int {
-	if outError != nil {
-		*outError = C.CString(err.Error())
+//export milib_unload_proxies
+func milib_unload_proxies(list C.milib_proxy_list) {
+	if list.items != nil {
+		C.free(unsafe.Pointer(list.items))
 	}
-	return -1
 }
 
-// milib_shutdown stops the instance and releases its resources.
-//
-//export milib_shutdown
-func milib_shutdown(h C.uint64_t) {
-	defer recoverQuiet()
-	_ = core.Shutdown(uint64(h))
+//export milib_add_options_default
+func milib_add_options_default() (out C.milib_add_options) {
+	out.select_proxy = true
+	return out
 }
 
-// milib_add_proxy parses one or more share links (or a base64 subscription)
-// and hot-swaps them into the MILIB selector group.
-//
 //export milib_add_proxy
-func milib_add_proxy(h C.uint64_t, linkOrBlob *C.char, optionsJSON *C.char) (out *C.char) {
+func milib_add_proxy(instance *C.milib_instance, uriOrBlob *C.char, options *C.milib_add_options) C.milib_error_code {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			logError(fmt.Errorf("panic: %v", r))
 		}
 	}()
-
-	c, err := core.Get(uint64(h))
-	if err != nil {
-		return jsonError(err)
+	if instance == nil {
+		return C.MILIB_ERROR_INVALID_ARGUMENT
 	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
+	if err != nil {
+		logError(err)
+		return cErrorCode(err)
+	}
+	if uriOrBlob == nil {
+		err = fmt.Errorf("link is required")
+		logError(err)
+		return cErrorCode(err)
+	}
+
 	opts := core.AddOptions{}
-	if optionsJSON != nil {
-		if err := json.Unmarshal([]byte(C.GoString(optionsJSON)), &opts); err != nil {
-			return jsonError(fmt.Errorf("parse options: %w", err))
-		}
+	if options != nil {
+		opts.Name = goString(options.name)
+		selected := bool(options.select_proxy)
+		opts.Select = &selected
+		opts.SkipCertVerify = bool(options.skip_cert_verify)
 	}
-	if linkOrBlob == nil {
-		return jsonError(fmt.Errorf("link is required"))
+	if _, err := c.Add(goString(uriOrBlob), opts); err != nil {
+		logError(err)
+		return cErrorCode(err)
 	}
-
-	result, err := c.Add(C.GoString(linkOrBlob), opts)
-	if err != nil {
-		return jsonError(err)
-	}
-	return jsonOK(map[string]any{
-		"added":    result.Added,
-		"selected": result.Selected,
-	})
+	return C.MILIB_ERROR_NONE
 }
 
-// milib_remove_proxy removes a proxy from the runtime MILIB group.
-//
 //export milib_remove_proxy
-func milib_remove_proxy(h C.uint64_t, name *C.char) (out *C.char) {
+func milib_remove_proxy(instance *C.milib_instance, name *C.char) C.milib_error_code {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			logError(fmt.Errorf("panic: %v", r))
 		}
 	}()
-
-	c, err := core.Get(uint64(h))
+	if instance == nil || name == nil {
+		return C.MILIB_ERROR_INVALID_ARGUMENT
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
 	if err != nil {
-		return jsonError(err)
+		logError(err)
+		return cErrorCode(err)
 	}
-	if name == nil {
-		return jsonError(fmt.Errorf("name is required"))
+	if _, err := c.Remove(goString(name)); err != nil {
+		logError(err)
+		return cErrorCode(err)
 	}
-	info, err := c.Remove(C.GoString(name))
-	if err != nil {
-		return jsonError(err)
-	}
-	return jsonOK(map[string]any{"removed": info})
+	return C.MILIB_ERROR_NONE
 }
 
-// milib_list_proxies returns the members of the MILIB group.
-//
-//export milib_list_proxies
-func milib_list_proxies(h C.uint64_t) (out *C.char) {
+//export milib_select_proxy
+func milib_select_proxy(instance *C.milib_instance, name *C.char) C.milib_error_code {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			logError(fmt.Errorf("panic: %v", r))
 		}
 	}()
-
-	c, err := core.Get(uint64(h))
-	if err != nil {
-		return jsonError(err)
+	if instance == nil || name == nil {
+		return C.MILIB_ERROR_INVALID_ARGUMENT
 	}
-	return jsonOK(c.List())
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
+	if err != nil {
+		logError(err)
+		return cErrorCode(err)
+	}
+	if err := c.Select("", goString(name)); err != nil {
+		logError(err)
+		return cErrorCode(err)
+	}
+	return C.MILIB_ERROR_NONE
 }
 
-// milib_select changes the active member of a selector group.
-//
-//export milib_select
-func milib_select(h C.uint64_t, group *C.char, name *C.char) (out *C.char) {
+//export milib_delay_options_default
+func milib_delay_options_default() (out C.milib_delay_options) {
+	return out
+}
+
+//export milib_test_delay
+func milib_test_delay(instance *C.milib_instance, proxyName *C.char, options *C.milib_delay_options) (out C.milib_delay_result) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			failDelayResult(&out, fmt.Errorf("panic: %v", r))
 		}
 	}()
-
-	c, err := core.Get(uint64(h))
+	if instance == nil || proxyName == nil {
+		failDelayResult(&out, fmt.Errorf("invalid argument"))
+		return out
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
 	if err != nil {
-		return jsonError(err)
+		failDelayResult(&out, err)
+		logError(err)
+		return out
 	}
-	if name == nil {
-		return jsonError(fmt.Errorf("name is required"))
+	result, err := c.TestDelay(goString(proxyName), parseDelayOptions(options))
+	if err != nil {
+		failDelayResult(&out, err)
+		logError(err)
+		return out
 	}
-	groupName := ""
-	if group != nil {
-		groupName = C.GoString(group)
-	}
-	if err := c.Select(groupName, C.GoString(name)); err != nil {
-		return jsonError(err)
-	}
-	if groupName == "" {
-		groupName = core.GroupName
-	}
-	return jsonOK(map[string]any{"group": groupName, "selected": C.GoString(name)})
+	fillDelayResult(&out, *result)
+	return out
 }
 
-// milib_status returns runtime counters and listener ports.
-//
-//export milib_status
-func milib_status(h C.uint64_t) (out *C.char) {
+//export milib_test_link
+func milib_test_link(instance *C.milib_instance, uri *C.char, options *C.milib_delay_options) (out C.milib_delay_result) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			failDelayResult(&out, fmt.Errorf("panic: %v", r))
 		}
 	}()
-
-	c, err := core.Get(uint64(h))
+	if instance == nil || uri == nil {
+		failDelayResult(&out, fmt.Errorf("invalid argument"))
+		return out
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
 	if err != nil {
-		return jsonError(err)
+		failDelayResult(&out, err)
+		logError(err)
+		return out
 	}
-	return jsonOK(c.Status())
-}
-
-func jsonOK(v map[string]any) *C.char {
-	if v == nil {
-		v = map[string]any{}
-	}
-	v["ok"] = true
-	data, err := json.Marshal(v)
+	result, err := c.TestLink(goString(uri), parseDelayOptions(options))
 	if err != nil {
-		return jsonError(fmt.Errorf("encode response: %w", err))
+		failDelayResult(&out, err)
+		logError(err)
+		return out
 	}
-	return C.CString(string(data))
-}
-
-func jsonError(err error) *C.char {
-	data, marshalErr := json.Marshal(map[string]any{
-		"ok":    false,
-		"error": err.Error(),
-	})
-	if marshalErr != nil {
-		return C.CString(`{"ok":false,"error":"encode error"}`)
-	}
-	return C.CString(string(data))
-}
-
-func recoverQuiet() {
-	_ = recover()
+	fillDelayResult(&out, *result)
+	return out
 }

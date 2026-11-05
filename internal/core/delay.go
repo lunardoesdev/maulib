@@ -19,11 +19,21 @@ const (
 	minDelayTimeout     = 100 * time.Millisecond
 )
 
-// DelayOptions maps the JSON options accepted by delay test functions.
+// DelayOptions configures a latency test.
 type DelayOptions struct {
-	URL       string `json:"url"`
-	TimeoutMS int    `json:"timeout_ms"`
-	Expected  string `json:"expected"`
+	URL       string
+	TimeoutMS int
+	Expected  string
+}
+
+// DelayResult is the outcome of a latency test.
+type DelayResult struct {
+	Name   string
+	Type   string
+	Server string
+	Port   int
+	URL    string
+	Delay  uint16
 }
 
 type resolvedDelayOptions struct {
@@ -55,16 +65,11 @@ func (o DelayOptions) resolve() (*resolvedDelayOptions, error) {
 }
 
 // TestDelay measures HTTP latency through a named proxy.
-func (c *Core) TestDelay(name string, opts DelayOptions) (map[string]any, error) {
-	result, err := c.testDelayWithContext(context.Background(), name, opts)
-	if err != nil {
-		return nil, err
-	}
-	result["ok"] = true
-	return result, nil
+func (c *Core) TestDelay(name string, opts DelayOptions) (*DelayResult, error) {
+	return c.testDelayWithContext(context.Background(), name, opts)
 }
 
-func (c *Core) testDelayWithContext(ctx context.Context, name string, opts DelayOptions) (map[string]any, error) {
+func (c *Core) testDelayWithContext(ctx context.Context, name string, opts DelayOptions) (*DelayResult, error) {
 	resolved, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -88,16 +93,16 @@ func (c *Core) testDelayWithContext(ctx context.Context, name string, opts Delay
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{
-		"name":  name,
-		"delay": delay,
-		"url":   resolved.url,
+	return &DelayResult{
+		Name:  name,
+		URL:   resolved.url,
+		Delay: delay,
 	}, nil
 }
 
 // TestLink parses a share link, creates a temporary proxy, measures its delay
 // and closes it without touching the active configuration.
-func (c *Core) TestLink(link string, opts DelayOptions) (map[string]any, error) {
+func (c *Core) TestLink(link string, opts DelayOptions) (*DelayResult, error) {
 	resolved, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -131,19 +136,18 @@ func (c *Core) TestLink(link string, opts DelayOptions) (map[string]any, error) 
 	server, _ := mapping["server"].(string)
 	port, _ := toInt(mapping["port"])
 	typ, _ := mapping["type"].(string)
-	return map[string]any{
-		"ok":     true,
-		"type":   typ,
-		"server": server,
-		"port":   port,
-		"delay":  delay,
-		"url":    resolved.url,
+	return &DelayResult{
+		Type:   typ,
+		Server: server,
+		Port:   port,
+		URL:    resolved.url,
+		Delay:  delay,
 	}, nil
 }
 
 // TestDelayAsync schedules TestDelay and returns the task id.
-func (c *Core) TestDelayAsync(name string, opts DelayOptions, cb func(int64, []byte)) int64 {
-	return c.tasks.start(func(ctx context.Context) (any, error) {
+func (c *Core) TestDelayAsync(name string, opts DelayOptions, cb func(TaskSnapshot)) int64 {
+	return c.tasks.start(TaskKindDelay, nil, func(ctx context.Context) (any, error) {
 		return c.testDelayWithContext(ctx, name, opts)
 	}, cb)
 }

@@ -8,7 +8,6 @@ three proxies concurrently with that download.
 Requires an Xray binary (default: /tmp/opencode/xray/xray, override XRAY_BIN).
 """
 
-import ctypes
 import ipaddress
 import json
 import os
@@ -366,10 +365,10 @@ def main():
         while time.time() < deadline and count_lines(links[0]["xray"]["access"]) == idle_before[0]:
             time.sleep(0.05)
 
-        ping_ids = [item["info"]["link_id"] for item in links[1:]]
+        ping_links = [item["ptr"] for item in links[1:]]
         started = time.time()
         many = api.links_ping_many(
-            ping_ids,
+            ping_links,
             {"url": f"{base_url}/204", "expected": "204", "timeout_ms": 5000},
         )
         ping_seconds = time.time() - started
@@ -407,35 +406,58 @@ def main():
             str(idle_after),
         )
 
-        # 5. Async many-ping with a C callback.
-        event = threading.Event()
-        box = {}
-        CB = ctypes.CFUNCTYPE(None, ctypes.c_int64, ctypes.c_char_p, ctypes.c_void_p)
-
-        def on_done(task_id, payload, user):
-            box["id"] = task_id
-            box["payload"] = json.loads(payload.decode()) if payload else None
-            event.set()
-
-        cb = CB(on_done)
-        task_id = api.links_ping_many_async(
-            ping_ids,
+        # 5. Async many-ping with a typed C callback.
+        async_many = api.links_ping_many_async(
+            ping_links,
             {"url": f"{base_url}/204", "expected": "204", "timeout_ms": 5000},
-            cb,
+            timeout=15,
         )
-        check("async many-ping scheduled", task_id > 0, str(task_id))
-        check("async many-ping callback fired", event.wait(15), "timeout")
+        check("async many-ping scheduled", bool(async_many.get("scheduled")), str(async_many))
         check(
             "async many-ping results are ok",
-            bool(box.get("payload") and box["payload"].get("ok"))
-            and all(item.get("ok") for item in box["payload"]["results"]),
-            str(box.get("payload")),
+            bool(async_many.get("ok"))
+            and all(item.get("ok") for item in async_many.get("results", [])),
+            str(async_many),
         )
 
-        # 6. Destroy one link; the others keep working.
+        many_task = api.links_ping_many_task(
+            ping_links,
+            {"url": f"{base_url}/204", "expected": "204", "timeout_ms": 5000},
+        )
+        check("many-ping poll task scheduled", bool(many_task), str(many_task))
+        polled = api.task_poll(many_task)
+        deadline = time.time() + 15
+        while polled["state"] == 0 and time.time() < deadline:
+            time.sleep(0.05)
+            polled = api.task_poll(many_task)
+        check(
+            "many-ping poll results are ok",
+            bool(polled.get("ok"))
+            and all(item.get("ok") for item in polled.get("results", [])),
+            str(polled),
+        )
+        api.task_destroy(many_task)
+
+        # 6. Destroy one link; its running task is cancelled, the others keep working.
         victim = links.pop()
         victim_addr = victim["info"]["socks"]["addr"]
+
+        slow_task = api.link_speed_task(
+            victim["ptr"],
+            {
+                "url": f"{base_url}/slow?bytes=300000&chunks=20&delay=0.25",
+                "bytes": 300000,
+                "timeout_ms": 20000,
+            },
+        )
+        check("link task scheduled", bool(slow_task), str(slow_task))
+        first_poll = api.task_poll(slow_task)
+        check("link task is running", first_poll["state"] == 0, str(first_poll))
+
         check("destroy link", api.link_destroy(victim["ptr"]) == 0, "")
+        cancelled = api.task_poll(slow_task)
+        check("destroy cancels the link task", cancelled["state"] == 2, str(cancelled))
+        api.task_destroy(slow_task)
         check(
             "destroyed link disappears",
             api.link_list()["count"] == PROXIES - 1,
@@ -446,7 +468,7 @@ def main():
             socket.create_connection((host, int(port)), timeout=1).close()
 
         gone = api.links_ping_many(
-            [victim["info"]["link_id"]],
+            [victim["ptr"]],
             {"url": f"{base_url}/204", "expected": "204", "timeout_ms": 1000},
         )
         check(

@@ -6,190 +6,111 @@ package main
 import "C"
 
 import (
-	"encoding/json"
 	"fmt"
 	"unsafe"
 
 	"milib/internal/core"
 )
 
-// milib_test_delay measures HTTP latency through a named proxy.
-//
-//export milib_test_delay
-func milib_test_delay(h C.uint64_t, name *C.char, optionsJSON *C.char) (out *C.char) {
-	defer func() {
-		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
-		}
-	}()
-
-	c, err := core.Get(uint64(h))
-	if err != nil {
-		return jsonError(err)
-	}
-	if name == nil {
-		return jsonError(fmt.Errorf("name is required"))
-	}
-	opts, err := parseDelayOptions(optionsJSON)
-	if err != nil {
-		return jsonError(err)
-	}
-	result, err := c.TestDelay(C.GoString(name), opts)
-	if err != nil {
-		return jsonError(err)
-	}
-	return jsonOK(result)
-}
-
-// milib_test_link parses a share link, creates a temporary proxy, tests it and
-// closes it without changing the active configuration.
-//
-//export milib_test_link
-func milib_test_link(h C.uint64_t, link *C.char, optionsJSON *C.char) (out *C.char) {
-	defer func() {
-		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
-		}
-	}()
-
-	c, err := core.Get(uint64(h))
-	if err != nil {
-		return jsonError(err)
-	}
-	if link == nil {
-		return jsonError(fmt.Errorf("link is required"))
-	}
-	opts, err := parseDelayOptions(optionsJSON)
-	if err != nil {
-		return jsonError(err)
-	}
-	result, err := c.TestLink(C.GoString(link), opts)
-	if err != nil {
-		return jsonError(err)
-	}
-	return jsonOK(result)
-}
-
-// milib_test_delay_async schedules an asynchronous delay test. The callback is
-// invoked from a Go goroutine with a JSON result; the string is only valid for
-// the duration of the call.
-//
-// Returns a task id > 0, or -1 when the task could not be scheduled.
-//
 //export milib_test_delay_async
-func milib_test_delay_async(h C.uint64_t, name *C.char, optionsJSON *C.char, cb C.milib_task_cb, user unsafe.Pointer) C.int64_t {
+func milib_test_delay_async(instance *C.milib_instance, proxyName *C.char, options *C.milib_delay_options, cb C.milib_task_cb, user unsafe.Pointer) (task *C.milib_task) {
 	defer func() {
 		if r := recover(); r != nil {
-			if cb != nil {
-				msg := C.CString(fmt.Sprintf(`{"ok":false,"error":"panic: %v"}`, r))
-				C.milib_call_task_cb(cb, -1, msg, user)
-				C.free(unsafe.Pointer(msg))
-			}
+			logError(fmt.Errorf("panic: %v", r))
 		}
 	}()
-
-	c, err := core.Get(uint64(h))
+	if instance == nil || proxyName == nil {
+		return nil
+	}
+	coreHandle := uint64(C.milib_instance_get_handle(instance))
+	c, err := core.Get(coreHandle)
 	if err != nil {
-		if cb != nil {
-			msg := C.CString(fmt.Sprintf(`{"ok":false,"error":%q}`, err.Error()))
-			C.milib_call_task_cb(cb, -1, msg, user)
-			C.free(unsafe.Pointer(msg))
-		}
-		return -1
+		logError(err)
+		return nil
 	}
-	if name == nil {
-		if cb != nil {
-			msg := C.CString(`{"ok":false,"error":"name is required"}`)
-			C.milib_call_task_cb(cb, -1, msg, user)
-			C.free(unsafe.Pointer(msg))
-		}
-		return -1
+	task = C.milib_task_new(0, C.uint64_t(coreHandle))
+	if task == nil {
+		return nil
 	}
-	opts, err := parseDelayOptions(optionsJSON)
-	if err != nil {
-		if cb != nil {
-			msg := C.CString(fmt.Sprintf(`{"ok":false,"error":%q}`, err.Error()))
-			C.milib_call_task_cb(cb, -1, msg, user)
-			C.free(unsafe.Pointer(msg))
-		}
-		return -1
-	}
-
-	var goCB func(int64, []byte)
-	if cb != nil {
-		goCB = func(id int64, result []byte) {
-			msg := C.CString(string(result))
-			C.milib_call_task_cb(cb, C.int64_t(id), msg, user)
-			C.free(unsafe.Pointer(msg))
-		}
-	}
-	return C.int64_t(c.TestDelayAsync(C.GoString(name), opts, goCB))
+	opts := parseDelayOptions(options)
+	return startTask(task, cb, user, func(goCB func(core.TaskSnapshot)) int64 {
+		return c.TestDelayAsync(goString(proxyName), opts, goCB)
+	})
 }
 
-// milib_task_poll returns the current state of an async task as JSON.
-//
 //export milib_task_poll
-func milib_task_poll(h C.uint64_t, taskID C.int64_t) (out *C.char) {
+func milib_task_poll(task *C.milib_task) (out C.milib_task_result) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			out = C.milib_task_result{}
+			out.state = C.MILIB_TASK_CANCELLED
+			out.error = C.MILIB_ERROR_FAILED
+			logError(fmt.Errorf("panic: %v", r))
 		}
 	}()
-
-	c, err := core.Get(uint64(h))
-	if err != nil {
-		return jsonError(err)
+	if task == nil {
+		out.state = C.MILIB_TASK_CANCELLED
+		out.error = C.MILIB_ERROR_INVALID_ARGUMENT
+		return out
 	}
-	data, ok := c.PollTask(int64(taskID))
+	c, err := core.Get(uint64(C.milib_task_get_core(task)))
+	if err != nil {
+		out.state = C.MILIB_TASK_CANCELLED
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	id := int64(C.milib_task_get_id(task))
+	snapshot, ok := c.PollTask(id)
 	if !ok {
-		return jsonError(fmt.Errorf("task %d not found", int64(taskID)))
+		out.state = C.MILIB_TASK_CANCELLED
+		out.error = C.MILIB_ERROR_NOT_FOUND
+		return out
 	}
-	return C.CString(data)
+	taskResultMu.Lock()
+	fillTaskResult(task, &out, snapshot)
+	taskResultMu.Unlock()
+	return out
 }
 
-// milib_task_cancel cancels a running async task. Returns 0 on success.
-//
 //export milib_task_cancel
-func milib_task_cancel(h C.uint64_t, taskID C.int64_t) C.int {
+func milib_task_cancel(task *C.milib_task) C.milib_error_code {
 	defer func() {
-		_ = recover()
+		if r := recover(); r != nil {
+			logError(fmt.Errorf("panic: %v", r))
+		}
 	}()
-
-	c, err := core.Get(uint64(h))
+	if task == nil {
+		return C.MILIB_ERROR_INVALID_ARGUMENT
+	}
+	c, err := core.Get(uint64(C.milib_task_get_core(task)))
 	if err != nil {
-		return -1
+		logError(err)
+		return cErrorCode(err)
 	}
-	if !c.CancelTask(int64(taskID)) {
-		return -1
+	if !c.CancelTask(int64(C.milib_task_get_id(task))) {
+		return C.MILIB_ERROR_NOT_FOUND
 	}
-	return 0
+	return C.MILIB_ERROR_NONE
 }
 
-// milib_task_free cancels (if needed) and forgets a task. Returns 0 on success.
-//
-//export milib_task_free
-func milib_task_free(h C.uint64_t, taskID C.int64_t) C.int {
-	defer func() {
-		_ = recover()
-	}()
+//export milib_task_destroy
+func milib_task_destroy(task *C.milib_task) {
+	if task == nil {
+		return
+	}
+	coreHandle := uint64(C.milib_task_get_core(task))
+	taskID := int64(C.milib_task_get_id(task))
+	if c, err := core.Get(coreHandle); err == nil {
+		c.FreeTask(taskID)
+	}
 
-	c, err := core.Get(uint64(h))
-	if err != nil {
-		return -1
+	taskResultMu.Lock()
+	if task.pings != nil {
+		C.free(task.pings)
+		task.pings = nil
+		task.ping_count = 0
 	}
-	if !c.FreeTask(int64(taskID)) {
-		return -1
-	}
-	return 0
-}
-
-func parseDelayOptions(optionsJSON *C.char) (core.DelayOptions, error) {
-	opts := core.DelayOptions{}
-	if optionsJSON == nil {
-		return opts, nil
-	}
-	if err := json.Unmarshal([]byte(C.GoString(optionsJSON)), &opts); err != nil {
-		return opts, fmt.Errorf("parse options: %w", err)
-	}
-	return opts, nil
+	taskResultMu.Unlock()
+	C.milib_task_free(task)
 }

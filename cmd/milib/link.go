@@ -6,335 +6,397 @@ package main
 import "C"
 
 import (
-	"encoding/json"
 	"fmt"
 	"unsafe"
 
 	"milib/internal/core"
 )
 
-// milib_link_create parses a share link and creates a SharedVPNLink: a proxy in
-// the MILIB group plus an authenticated per-link SOCKS5 endpoint.
-//
-// Returns an opaque handle, or NULL on error (see out_error).
-//
-//export milib_link_create
-func milib_link_create(h C.uint64_t, link *C.char, optionsJSON *C.char, outError **C.char) (out *C.milib_link) {
-	defer func() {
-		if r := recover(); r != nil {
-			setCError(outError, fmt.Errorf("panic: %v", r))
-			out = nil
-		}
-	}()
-
-	c, err := core.Get(uint64(h))
-	if err != nil {
-		setCError(outError, err)
-		return nil
-	}
-	if link == nil {
-		setCError(outError, fmt.Errorf("link is required"))
-		return nil
-	}
-	opts := core.LinkOptions{}
-	if optionsJSON != nil {
-		if err := json.Unmarshal([]byte(C.GoString(optionsJSON)), &opts); err != nil {
-			setCError(outError, fmt.Errorf("parse options: %w", err))
-			return nil
-		}
-	}
-
-	shared, err := c.CreateLink(C.GoString(link), opts)
-	if err != nil {
-		setCError(outError, err)
-		return nil
-	}
-
-	handle := C.milib_link_new(C.uint64_t(shared.ID), C.uint64_t(h))
-	if handle == nil {
-		_ = c.DestroyLink(shared.ID)
-		setCError(outError, fmt.Errorf("allocate link handle"))
-		return nil
-	}
-	if outError != nil {
-		*outError = nil
-	}
-	return handle
+//export milib_link_options_default
+func milib_link_options_default() (out C.milib_link_options) {
+	out.local_proxy = true
+	return out
 }
 
-// milib_link_destroy removes the proxy, closes the local SOCKS endpoint and
-// frees the handle. Do not use the handle after this call.
-//
-//export milib_link_destroy
-func milib_link_destroy(link *C.milib_link) (ret C.int) {
+//export milib_link_create
+func milib_link_create(instance *C.milib_instance, uri *C.char, options *C.milib_link_options) (result C.milib_link_result) {
 	defer func() {
 		if r := recover(); r != nil {
-			ret = -1
+			setCError(&result.error, fmt.Errorf("panic: %v", r))
 		}
 	}()
+	if instance == nil {
+		setCError(&result.error, fmt.Errorf("invalid instance"))
+		return result
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
+	if err != nil {
+		setCError(&result.error, err)
+		logError(err)
+		return result
+	}
+	if uri == nil {
+		err = fmt.Errorf("link is required")
+		setCError(&result.error, err)
+		logError(err)
+		return result
+	}
+
+	opts := core.LinkOptions{}
+	if options != nil {
+		opts.Name = goString(options.name)
+		selected := bool(options.select_proxy)
+		opts.Select = &selected
+		localProxy := bool(options.local_proxy)
+		opts.LocalProxy = &localProxy
+		opts.Username = goString(options.username)
+		opts.Password = goString(options.password)
+		opts.ProxyPassword = goString(options.proxy_password)
+	}
+
+	shared, err := c.CreateLink(goString(uri), opts)
+	if err != nil {
+		setCError(&result.error, err)
+		logError(err)
+		return result
+	}
+	handle := C.milib_link_new(C.uint64_t(shared.ID), C.uint64_t(C.milib_instance_get_handle(instance)))
+	if handle == nil {
+		_ = c.DestroyLink(shared.ID)
+		err = fmt.Errorf("allocate link handle")
+		setCError(&result.error, err)
+		logError(err)
+		return result
+	}
+	result.link = handle
+	return result
+}
+
+//export milib_link_destroy
+func milib_link_destroy(link *C.milib_link) {
 	if link == nil {
-		return -1
+		return
 	}
 	coreHandle := uint64(C.milib_link_get_core(link))
 	linkID := uint64(C.milib_link_get_id(link))
+	defer C.milib_link_free(link)
+
 	c, err := core.Get(coreHandle)
 	if err != nil {
-		return -1
+		logError(err)
+		return
 	}
 	if err := c.DestroyLink(linkID); err != nil {
-		return -1
+		logError(err)
 	}
-	C.milib_link_free(link)
-	return 0
 }
 
-// milib_link_info returns the link description, including generated auth.
-//
-//export milib_link_info
-func milib_link_info(link *C.milib_link) (out *C.char) {
+//export milib_link_get_info
+func milib_link_get_info(link *C.milib_link) (out C.milib_link_info) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			out = C.milib_link_info{}
+			out.error = C.MILIB_ERROR_FAILED
+			logError(fmt.Errorf("panic: %v", r))
 		}
 	}()
 	c, id, err := resolveLink(link)
 	if err != nil {
-		return jsonError(err)
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
 	}
 	info, err := c.LinkInfo(id)
 	if err != nil {
-		return jsonError(err)
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
 	}
-	return jsonOK(info)
+	fillLinkInfo(&out, *info)
+	return out
 }
 
-// milib_link_list returns all live links.
-//
-//export milib_link_list
-func milib_link_list(h C.uint64_t) (out *C.char) {
+//export milib_load_links
+func milib_load_links(instance *C.milib_instance) (out C.milib_link_list) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			out = C.milib_link_list{}
+			out.error = C.MILIB_ERROR_FAILED
+			logError(fmt.Errorf("panic: %v", r))
 		}
 	}()
-	c, err := core.Get(uint64(h))
+	if instance == nil {
+		out.error = C.MILIB_ERROR_INVALID_ARGUMENT
+		return out
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
 	if err != nil {
-		return jsonError(err)
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
 	}
 	links, err := c.ListLinks()
 	if err != nil {
-		return jsonError(err)
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
 	}
-	return jsonOK(map[string]any{"links": links, "count": len(links)})
+	items, err := allocItems[C.milib_link_info](len(links))
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	if items != nil {
+		slice := unsafe.Slice(items, len(links))
+		for i, link := range links {
+			fillLinkInfo(&slice[i], link)
+		}
+	}
+	out.ok = true
+	out.error = C.MILIB_ERROR_NONE
+	out.items = items
+	out.count = C.size_t(len(links))
+	return out
 }
 
-// milib_link_ping measures latency by passing HTTP traffic through the proxy.
-//
+//export milib_unload_links
+func milib_unload_links(list C.milib_link_list) {
+	if list.items != nil {
+		C.free(unsafe.Pointer(list.items))
+	}
+}
+
 //export milib_link_ping
-func milib_link_ping(link *C.milib_link, optionsJSON *C.char) (out *C.char) {
+func milib_link_ping(link *C.milib_link, options *C.milib_delay_options) (out C.milib_ping_result) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			failPingResult(&out, fmt.Errorf("panic: %v", r))
 		}
 	}()
 	c, id, err := resolveLink(link)
 	if err != nil {
-		return jsonError(err)
+		failPingResult(&out, err)
+		logError(err)
+		return out
 	}
-	opts, err := parseDelayOptions(optionsJSON)
+	result, err := c.LinkPing(id, parseDelayOptions(options))
 	if err != nil {
-		return jsonError(err)
+		failPingResult(&out, err)
+		logError(err)
+		return out
 	}
-	result, err := c.LinkPing(id, opts)
-	if err != nil {
-		return jsonError(err)
-	}
-	return jsonOK(result)
+	fillPingResult(&out, *result, nil)
+	return out
 }
 
-// milib_link_ping_ms measures latency and writes it as an integer number of
-// milliseconds to *out_delay_ms.
-//
-// Returns 0 on success, -1 on error (see out_error).
-//
-//export milib_link_ping_ms
-func milib_link_ping_ms(link *C.milib_link, optionsJSON *C.char, outDelay *C.int, outError **C.char) (ret C.int) {
-	defer func() {
-		if r := recover(); r != nil {
-			setCError(outError, fmt.Errorf("panic: %v", r))
-			ret = -1
-		}
-	}()
-
-	c, id, err := resolveLink(link)
-	if err != nil {
-		setCError(outError, err)
-		return -1
-	}
-	opts, err := parseDelayOptions(optionsJSON)
-	if err != nil {
-		setCError(outError, err)
-		return -1
-	}
-	delay, err := c.LinkPingMS(id, opts)
-	if err != nil {
-		setCError(outError, err)
-		return -1
-	}
-	if outDelay != nil {
-		*outDelay = C.int(delay)
-	}
-	if outError != nil {
-		*outError = nil
-	}
-	return 0
+//export milib_speed_options_default
+func milib_speed_options_default() (out C.milib_speed_options) {
+	return out
 }
 
-// milib_link_speed downloads data through the proxy and reports throughput.
-//
 //export milib_link_speed
-func milib_link_speed(link *C.milib_link, optionsJSON *C.char) (out *C.char) {
+func milib_link_speed(link *C.milib_link, options *C.milib_speed_options) (out C.milib_speed_result) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			failSpeedResult(&out, fmt.Errorf("panic: %v", r))
 		}
 	}()
 	c, id, err := resolveLink(link)
 	if err != nil {
-		return jsonError(err)
+		failSpeedResult(&out, err)
+		logError(err)
+		return out
 	}
-	opts, err := parseSpeedOptions(optionsJSON)
+	result, err := c.LinkSpeed(id, parseSpeedOptions(options))
 	if err != nil {
-		return jsonError(err)
+		failSpeedResult(&out, err)
+		logError(err)
+		return out
 	}
-	result, err := c.LinkSpeed(id, opts)
-	if err != nil {
-		return jsonError(err)
-	}
-	return jsonOK(result)
+	fillSpeedResult(&out, *result)
+	return out
 }
 
-// milib_link_exit_ip resolves the exit IP through the proxy.
-//
+//export milib_exit_ip_options_default
+func milib_exit_ip_options_default() (out C.milib_exit_ip_options) {
+	return out
+}
+
 //export milib_link_exit_ip
-func milib_link_exit_ip(link *C.milib_link, optionsJSON *C.char) (out *C.char) {
+func milib_link_exit_ip(link *C.milib_link, options *C.milib_exit_ip_options) (out C.milib_exit_ip_result) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			failExitIPResult(&out, fmt.Errorf("panic: %v", r))
 		}
 	}()
 	c, id, err := resolveLink(link)
 	if err != nil {
-		return jsonError(err)
+		failExitIPResult(&out, err)
+		logError(err)
+		return out
 	}
-	opts, err := parseExitIPOptions(optionsJSON)
+	result, err := c.LinkExitIP(id, parseExitIPOptions(options))
 	if err != nil {
-		return jsonError(err)
+		failExitIPResult(&out, err)
+		logError(err)
+		return out
 	}
-	result, err := c.LinkExitIP(id, opts)
-	if err != nil {
-		return jsonError(err)
-	}
-	return jsonOK(result)
+	fillExitIPResult(&out, *result)
+	return out
 }
 
-// milib_link_ping_async schedules a ping task for one link.
-//
+//export milib_link_ping_many
+func milib_link_ping_many(instance *C.milib_instance, links **C.milib_link, count C.size_t, options *C.milib_delay_options) (out C.milib_ping_many_result) {
+	defer func() {
+		if r := recover(); r != nil {
+			out = C.milib_ping_many_result{}
+			out.error = C.MILIB_ERROR_FAILED
+			logError(fmt.Errorf("panic: %v", r))
+		}
+	}()
+	if instance == nil {
+		out.error = C.MILIB_ERROR_INVALID_ARGUMENT
+		return out
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	ids, err := linkIDsFromHandles(links, count)
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	result, err := c.PingMany(ids, parseDelayOptions(options))
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	items, err := allocItems[C.milib_ping_result](len(result.Outcomes))
+	if err != nil {
+		out.error = cErrorCode(err)
+		logError(err)
+		return out
+	}
+	if items != nil {
+		slice := unsafe.Slice(items, len(result.Outcomes))
+		for i, outcome := range result.Outcomes {
+			fillPingResult(&slice[i], core.PingResult{Delay: outcome.Delay}, outcome.Err)
+		}
+	}
+	out.ok = true
+	out.error = C.MILIB_ERROR_NONE
+	out.items = items
+	out.count = C.size_t(len(result.Outcomes))
+	return out
+}
+
+//export milib_unload_ping_many
+func milib_unload_ping_many(result C.milib_ping_many_result) {
+	if result.items != nil {
+		C.free(unsafe.Pointer(result.items))
+	}
+}
+
 //export milib_link_ping_async
-func milib_link_ping_async(link *C.milib_link, optionsJSON *C.char, cb C.milib_task_cb, user unsafe.Pointer) C.int64_t {
-	c, id, err := resolveLink(link)
-	if err != nil {
-		return asyncSetupError(cb, user, err)
-	}
-	opts, err := parseDelayOptions(optionsJSON)
-	if err != nil {
-		return asyncSetupError(cb, user, err)
-	}
-	return C.int64_t(c.LinkPingAsync(id, opts, goTaskCallback(cb, user)))
-}
-
-// milib_link_speed_async schedules a speed task for one link.
-//
-//export milib_link_speed_async
-func milib_link_speed_async(link *C.milib_link, optionsJSON *C.char, cb C.milib_task_cb, user unsafe.Pointer) C.int64_t {
-	c, id, err := resolveLink(link)
-	if err != nil {
-		return asyncSetupError(cb, user, err)
-	}
-	opts, err := parseSpeedOptions(optionsJSON)
-	if err != nil {
-		return asyncSetupError(cb, user, err)
-	}
-	return C.int64_t(c.LinkSpeedAsync(id, opts, goTaskCallback(cb, user)))
-}
-
-// milib_link_exit_ip_async schedules an exit-IP task for one link.
-//
-//export milib_link_exit_ip_async
-func milib_link_exit_ip_async(link *C.milib_link, optionsJSON *C.char, cb C.milib_task_cb, user unsafe.Pointer) C.int64_t {
-	c, id, err := resolveLink(link)
-	if err != nil {
-		return asyncSetupError(cb, user, err)
-	}
-	opts, err := parseExitIPOptions(optionsJSON)
-	if err != nil {
-		return asyncSetupError(cb, user, err)
-	}
-	return C.int64_t(c.LinkExitIPAsync(id, opts, goTaskCallback(cb, user)))
-}
-
-// milib_links_ping_many pings several links concurrently and waits for all of
-// them. links_json is a JSON array of link ids: [1,2,3].
-//
-//export milib_links_ping_many
-func milib_links_ping_many(h C.uint64_t, linksJSON *C.char, optionsJSON *C.char) (out *C.char) {
+func milib_link_ping_async(link *C.milib_link, options *C.milib_delay_options, cb C.milib_task_cb, user unsafe.Pointer) (task *C.milib_task) {
 	defer func() {
 		if r := recover(); r != nil {
-			out = jsonError(fmt.Errorf("panic: %v", r))
+			logError(fmt.Errorf("panic: %v", r))
 		}
 	}()
-	c, err := core.Get(uint64(h))
+	c, id, err := resolveLink(link)
 	if err != nil {
-		return jsonError(err)
+		logError(err)
+		return nil
 	}
-	if linksJSON == nil {
-		return jsonError(fmt.Errorf("links is required"))
+	task = C.milib_task_new(0, C.uint64_t(C.milib_link_get_core(link)))
+	if task == nil {
+		return nil
 	}
-	ids, err := core.ParseLinkIDs(C.GoString(linksJSON))
-	if err != nil {
-		return jsonError(err)
-	}
-	opts, err := parseDelayOptions(optionsJSON)
-	if err != nil {
-		return jsonError(err)
-	}
-	result, err := c.PingMany(ids, opts)
-	if err != nil {
-		return jsonError(err)
-	}
-	return jsonOK(result)
+	opts := parseDelayOptions(options)
+	return startTask(task, cb, user, func(goCB func(core.TaskSnapshot)) int64 {
+		return c.LinkPingAsync(id, opts, goCB)
+	})
 }
 
-// milib_links_ping_many_async schedules a concurrent ping of several links.
-//
-//export milib_links_ping_many_async
-func milib_links_ping_many_async(h C.uint64_t, linksJSON *C.char, optionsJSON *C.char, cb C.milib_task_cb, user unsafe.Pointer) C.int64_t {
-	c, err := core.Get(uint64(h))
+//export milib_link_speed_async
+func milib_link_speed_async(link *C.milib_link, options *C.milib_speed_options, cb C.milib_task_cb, user unsafe.Pointer) (task *C.milib_task) {
+	defer func() {
+		if r := recover(); r != nil {
+			logError(fmt.Errorf("panic: %v", r))
+		}
+	}()
+	c, id, err := resolveLink(link)
 	if err != nil {
-		return asyncSetupError(cb, user, err)
+		logError(err)
+		return nil
 	}
-	if linksJSON == nil {
-		return asyncSetupError(cb, user, fmt.Errorf("links is required"))
+	task = C.milib_task_new(0, C.uint64_t(C.milib_link_get_core(link)))
+	if task == nil {
+		return nil
 	}
-	ids, err := core.ParseLinkIDs(C.GoString(linksJSON))
+	opts := parseSpeedOptions(options)
+	return startTask(task, cb, user, func(goCB func(core.TaskSnapshot)) int64 {
+		return c.LinkSpeedAsync(id, opts, goCB)
+	})
+}
+
+//export milib_link_exit_ip_async
+func milib_link_exit_ip_async(link *C.milib_link, options *C.milib_exit_ip_options, cb C.milib_task_cb, user unsafe.Pointer) (task *C.milib_task) {
+	defer func() {
+		if r := recover(); r != nil {
+			logError(fmt.Errorf("panic: %v", r))
+		}
+	}()
+	c, id, err := resolveLink(link)
 	if err != nil {
-		return asyncSetupError(cb, user, err)
+		logError(err)
+		return nil
 	}
-	opts, err := parseDelayOptions(optionsJSON)
+	task = C.milib_task_new(0, C.uint64_t(C.milib_link_get_core(link)))
+	if task == nil {
+		return nil
+	}
+	opts := parseExitIPOptions(options)
+	return startTask(task, cb, user, func(goCB func(core.TaskSnapshot)) int64 {
+		return c.LinkExitIPAsync(id, opts, goCB)
+	})
+}
+
+//export milib_link_ping_many_async
+func milib_link_ping_many_async(instance *C.milib_instance, links **C.milib_link, count C.size_t, options *C.milib_delay_options, cb C.milib_task_cb, user unsafe.Pointer) (task *C.milib_task) {
+	defer func() {
+		if r := recover(); r != nil {
+			logError(fmt.Errorf("panic: %v", r))
+		}
+	}()
+	if instance == nil {
+		return nil
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
 	if err != nil {
-		return asyncSetupError(cb, user, err)
+		logError(err)
+		return nil
 	}
-	return C.int64_t(c.PingManyAsync(ids, opts, goTaskCallback(cb, user)))
+	ids, err := linkIDsFromHandles(links, count)
+	if err != nil {
+		logError(err)
+		return nil
+	}
+	task = C.milib_task_new(0, C.uint64_t(C.milib_instance_get_handle(instance)))
+	if task == nil {
+		return nil
+	}
+	opts := parseDelayOptions(options)
+	return startTask(task, cb, user, func(goCB func(core.TaskSnapshot)) int64 {
+		return c.PingManyAsync(ids, opts, goCB)
+	})
 }
 
 func resolveLink(link *C.milib_link) (*core.Core, uint64, error) {
@@ -351,52 +413,4 @@ func resolveLink(link *C.milib_link) (*core.Core, uint64, error) {
 		return nil, 0, err
 	}
 	return c, id, nil
-}
-
-func setCError(outError **C.char, err error) {
-	if outError != nil {
-		*outError = C.CString(err.Error())
-	}
-}
-
-func asyncSetupError(cb C.milib_task_cb, user unsafe.Pointer, err error) C.int64_t {
-	if cb != nil {
-		msg := C.CString(fmt.Sprintf(`{"ok":false,"error":%q}`, err.Error()))
-		C.milib_call_task_cb(cb, -1, msg, user)
-		C.free(unsafe.Pointer(msg))
-	}
-	return -1
-}
-
-func goTaskCallback(cb C.milib_task_cb, user unsafe.Pointer) func(int64, []byte) {
-	if cb == nil {
-		return nil
-	}
-	return func(id int64, result []byte) {
-		msg := C.CString(string(result))
-		C.milib_call_task_cb(cb, C.int64_t(id), msg, user)
-		C.free(unsafe.Pointer(msg))
-	}
-}
-
-func parseSpeedOptions(optionsJSON *C.char) (core.SpeedOptions, error) {
-	opts := core.SpeedOptions{}
-	if optionsJSON == nil {
-		return opts, nil
-	}
-	if err := json.Unmarshal([]byte(C.GoString(optionsJSON)), &opts); err != nil {
-		return opts, fmt.Errorf("parse options: %w", err)
-	}
-	return opts, nil
-}
-
-func parseExitIPOptions(optionsJSON *C.char) (core.ExitIPOptions, error) {
-	opts := core.ExitIPOptions{}
-	if optionsJSON == nil {
-		return opts, nil
-	}
-	if err := json.Unmarshal([]byte(C.GoString(optionsJSON)), &opts); err != nil {
-		return opts, fmt.Errorf("parse options: %w", err)
-	}
-	return opts, nil
 }

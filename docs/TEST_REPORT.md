@@ -1,7 +1,7 @@
 # milib — отчёт о тестировании
 
 Дата: 2026-11-05
-Версия: 0.1.0, mihomo v1.19.33
+Версия: 0.2.0 (ABI v2), mihomo v1.19.33
 
 ## Окружение
 
@@ -26,90 +26,105 @@ make build
 
 Результат: `dist/libmilib.so` — 55 MiB.
 
-Полный прогон: `make test` → exit code 0.
+## 1. Go-тесты задач
 
-## 1. Базовые ABI/unit-тесты (Python ctypes)
+Команда: `go test ./internal/core`
+
+Проверено:
+
+- `cancelLinks` отменяет задачу и ждёт завершения callback;
+- `cancelLinks` не трогает задачи других ссылок;
+- `FreeTask` не возвращается, пока callback ещё выполняется.
+
+```
+ok  	milib/internal/core
+```
+
+## 2. Базовые ABI/unit-тесты (Python ctypes)
 
 Команда: `python3 tests/python/test_api.py`
 
 ```
-Ran 10 tests in 0.059s
+Ran 10 tests
 OK
 ```
 
-Покрыто: версия, init/status, невалидные ссылки, add/list/remove,
+Покрыто: версия/ABI, init/status, невалидные ссылки, add/load/remove,
 защита встроенных имён, уникализация имён, select, ошибка delay для мёртвого
 прокси, повторный init после shutdown, отказ второго экземпляра.
 
-## 2. SharedVPNLink без сети
+## 3. SharedVPNLink без сети
 
 Команда: `python3 tests/python/test_links.py`
 
 ```
-Ran 13 tests in 0.069s
+Ran 14 tests
 OK
 ```
 
 Покрыто:
 
-- создание `SharedVPNLink` и `milib_link_info`;
+- создание `SharedVPNLink` и `milib_link_get_info`;
 - генерация логина/пароля per-link SOCKS5;
 - ручной пароль (`password`) и upstream-пароль (`proxy_password`);
 - SOCKS5-авторизация: неверный пароль отклоняется, верный принимается;
-- `local_proxy: false` отключает локальный SOCKS;
-- ping/speed/exit_ip для мёртвого прокси возвращают `ok:false`, без падения;
-- `milib_links_ping_many` для трёх мёртвых ссылок: три изолированных результата;
+- `local_proxy = false` отключает локальный SOCKS;
+- ping/speed/exit_ip для мёртвого прокси возвращают ошибку без падения;
+- `milib_link_ping_many` для трёх мёртвых ссылок: три изолированных результата;
 - async ping/speed/exit_ip с C-callback;
+- poll async-задачи и `milib_task_destroy`;
 - `milib_remove_proxy` не даёт удалить прокси, принадлежащий ссылке;
 - `milib_link_destroy`: ссылка исчезает из реестра, SOCKS-порт закрывается.
 
-## 3. C ABI
+## 4. C ABI
 
 Команда: `make test-c`
 
 ```
+PASS  abi version
 PASS  version
 PASS  init
 PASS  status ok
 PASS  add proxy
-PASS  list proxies
+PASS  load proxies
+PASS  added proxy is selected
 PASS  select DIRECT
 PASS  remove proxy
 PASS  remove missing fails
 PASS  link create
 PASS  link info
-PASS  link list
-PASS  link destroy
-PASS  link list after destroy
+PASS  link info has auth
+PASS  load links
+PASS  load links after destroy
 
 all C tests passed
 ```
 
 Тест собран с `#include "milib.h"` и линкуется с `libmilib.so`.
 
-Отдельная проверка ping из C через локальный Xray:
+Проверка ping из C через локальный Xray:
 
 ```
 $ make test-c-ping-local
-3
+2
 ```
 
-`3` — задержка в миллисекундах, полученная через `milib_link_ping_ms`.
+`2` — задержка в миллисекундах из `milib_ping_result.delay_ms`.
 
-## 4. Stress: 100 циклов add/remove
+## 5. Stress: 100 циклов add/remove
 
 Команда: `python3 tests/python/test_stress.py`
 
 ```
-cycles=100 fds=11->11 goroutines=5->5 rss=62532KiB->67436KiB
+cycles=100 fds=11->11 goroutines=5->5 rss=60760KiB->65172KiB
 OK
 ```
 
-Утечек FD и goroutine нет; рост RSS ~4.8 MiB на 100 hot-swap циклов.
+Утечек FD и goroutine нет; рост RSS ~4.3 MiB на 100 hot-swap циклов.
 
-## 5. E2E: один VLESS + mixed inbound
+## 6. E2E: один VLESS + mixed inbound
 
-Команда: `python3 tests/e2e/run.py` → **19 passed, 0 failed**.
+Команда: `python3 tests/e2e/run.py` → **18 passed, 0 failed**.
 
 Подтверждено:
 
@@ -117,31 +132,29 @@ OK
 - `curl -x http://127.0.0.1:<mixed>` реально идёт через Xray (access-лог растёт);
 - после `remove` трафик возвращается на `DIRECT`, Xray больше не используется;
 - при остановленном Xray delay и трафик дают ошибку без падения;
-- async callback и `test_link` без добавления.
+- async callback, `test_link` без добавления, log callback.
 
-## 6. E2E: 4 прокси, hot-swap и конкурентные задачи
+## 7. E2E: 4 прокси, hot-swap и конкурентные задачи
 
-Команда: `python3 tests/e2e/run_links.py` → **35 passed, 0 failed**.
+Команда: `python3 tests/e2e/run_links.py` → **39 passed, 0 failed**.
 
-Сценарий полностью повторяет требование:
+Сценарий:
 
 1. Python создаёт 4 `SharedVPNLink` через FFI; каждая ссылка указывает на
    отдельный локальный Xray с собственным access-логом.
-2. Для каждой ссылки проверены `ping`, `speed` (1 MiB) и `exit_ip` —
-   все три метода идут трафиком через прокси.
+2. Для каждой ссылки проверены `ping`, `speed` (1 MiB) и `exit_ip`.
 3. Per-link SOCKS5: неверный пароль отклоняется, верный — маршрутизирует
-   запрос через свой Xray (access-лог соответствующего процесса растёт).
-4. **Hot-swap**: выбран прокси №1, запущена медленная загрузка
-   (`/slow`, ~5 с), затем активный прокси переключён на №2. Загрузка
-   завершилась с кодом 200 и полным размером, её трафик остался в логе Xray №1;
-   новый запрос ушёл в Xray №2, лог №1 после этого не изменился.
-5. **Параллельность**: пока медленная загрузка идёт через прокси №1,
-   `milib_links_ping_many([2,3,4])` пингует три других. Все три `ok`,
-   загрузка в этот момент ещё выполняется и затем завершается полностью;
-   логи Xray №2–№4 выросли, что доказывает независимость задач.
-6. Async `milib_links_ping_many_async` с C-callback возвращает `ok` для всех трёх.
+   запрос через свой Xray.
+4. Hot-swap: выбран прокси №1, запущена медленная загрузка, затем активный
+   прокси переключён на №2. Загрузка завершилась полностью, её трафик остался
+   в логе Xray №1; новый запрос ушёл в Xray №2.
+5. Параллельность: пока медленная загрузка идёт через прокси №1,
+   `milib_link_ping_many` пингует три других. Все три `ok`, загрузка в этот
+   момент ещё выполняется и затем завершается полностью.
+6. Async `milib_link_ping_many_async` с C-callback возвращает `ok` для всех трёх;
+   тот же сценарий через `milib_task_poll` также возвращает `ok`.
 7. `milib_link_destroy` для одной ссылки: она исчезает из реестра, её SOCKS-порт
-   закрыт, ping по её id возвращает ошибку, остальные ссылки продолжают работать.
+   закрыт, запущенная async-задача отменена, остальные ссылки продолжают работать.
 
 Фрагмент вывода:
 
@@ -150,18 +163,15 @@ PASS  xray-1: ping through proxy
 PASS  xray-1: speed through proxy
 PASS  xray-1: exit ip through proxy
 ...
-PASS  per-link SOCKS rejects wrong password
-PASS  per-link SOCKS routes through its proxy
-PASS  in-flight download survives hot-swap
-PASS  in-flight download stayed on the first link
-PASS  new traffic goes through the second link
-PASS  pings finish while the download is still running
-PASS  each ping used its own link
 PASS  async many-ping results are ok
+PASS  many-ping poll results are ok
+PASS  link task is running
+PASS  destroy link
+PASS  destroy cancels the link task
 PASS  pinging a destroyed link fails
 PASS  surviving links still work
 
-35 passed, 0 failed
+39 passed, 0 failed
 ```
 
 ## Ограничения
@@ -170,8 +180,9 @@ PASS  surviving links still work
 - проверен только Linux x86_64/glibc 2.44;
 - per-link SOCKS5 — TCP only;
 - внешняя реальная VLESS-ссылка проверяется опционально через
-  `MILIB_TEST_VLESS` и в этом прогоне не использовалась;
+  `MILIB_TEST_VLESS`;
 - «пинг» — HTTP-задержка, не ICMP;
 - один экземпляр ядра на процесс;
+- `milib_close` и `milib_link_destroy` нельзя вызывать из async callback;
 - Xray 26.x блокирует loopback/private цели из VLESS-inbound по умолчанию;
   в тестовом конфиге добавлено `finalRules: allow 127.0.0.0/8`.

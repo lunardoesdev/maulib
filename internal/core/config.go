@@ -31,7 +31,7 @@ rules:
   - MATCH,MILIB
 `
 
-// InitOptions maps the JSON options accepted by milib_init.
+// InitOptions configures milib_init.
 //
 // MixedPort semantics:
 //   - nil: use `mixed-port` from the YAML config, otherwise pick a free port;
@@ -39,8 +39,8 @@ rules:
 //   - 0: pick a free port;
 //   - >0: bind exactly this port.
 type InitOptions struct {
-	MixedPort *int   `json:"mixed_port"`
-	LogLevel  string `json:"log_level"`
+	MixedPort *int
+	LogLevel  string
 }
 
 type preparedConfig struct {

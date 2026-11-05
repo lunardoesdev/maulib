@@ -277,12 +277,28 @@ func currentSelection() string {
 	return "DIRECT"
 }
 
-// Status returns the JSON object for milib_status.
-func (c *Core) Status() map[string]any {
+// StatusInfo describes the running instance.
+type StatusInfo struct {
+	Version       string
+	MihomoVersion string
+	Running       bool
+	Mode          string
+	MixedPort     int
+	SocksPort     int
+	HTTPPort      int
+	Proxies       int
+	Selected      string
+	Goroutines    int
+	RSSBytes      int64
+	UptimeMS      int64
+}
+
+// Status returns runtime counters and listener ports.
+func (c *Core) Status() (*StatusInfo, error) {
 	c.mu.RLock()
 	if c.closed {
 		c.mu.RUnlock()
-		return map[string]any{"ok": false, "error": ErrClosed.Error()}
+		return nil, ErrClosed
 	}
 	startedAt := c.startedAt
 	selected := c.selected
@@ -294,21 +310,20 @@ func (c *Core) Status() map[string]any {
 		selected = currentSelection()
 	}
 
-	return map[string]any{
-		"ok":             true,
-		"version":        Version,
-		"mihomo_version": C.Version,
-		"running":        true,
-		"mode":           tunnel.Mode().String(),
-		"mixed_port":     ports.MixedPort,
-		"socks_port":     ports.SocksPort,
-		"http_port":      ports.Port,
-		"proxies":        len(members),
-		"selected":       selected,
-		"goroutines":     runtime.NumGoroutine(),
-		"rss_bytes":      rssBytes(),
-		"uptime_ms":      time.Since(startedAt).Milliseconds(),
-	}
+	return &StatusInfo{
+		Version:       Version,
+		MihomoVersion: C.Version,
+		Running:       true,
+		Mode:          tunnel.Mode().String(),
+		MixedPort:     ports.MixedPort,
+		SocksPort:     ports.SocksPort,
+		HTTPPort:      ports.Port,
+		Proxies:       len(members),
+		Selected:      selected,
+		Goroutines:    runtime.NumGoroutine(),
+		RSSBytes:      rssBytes(),
+		UptimeMS:      time.Since(startedAt).Milliseconds(),
+	}, nil
 }
 
 func rssBytes() int64 {

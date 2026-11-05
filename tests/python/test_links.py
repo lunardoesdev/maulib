@@ -5,12 +5,10 @@ They cover handle lifecycle, generated/manual auth, the per-link authenticated
 SOCKS5 endpoint, error paths, concurrent ping of several links and destroy.
 """
 
-import ctypes
-import json
 import os
 import socket
 import sys
-import threading
+import time
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -126,9 +124,8 @@ class LinkTest(unittest.TestCase):
 
     def test_09_many_pings_are_isolated(self):
         links = [self.make_link() for _ in range(3)]
-        ids = [self.api.link_info(link)["link_id"] for link in links]
         result = self.api.links_ping_many(
-            ids,
+            links,
             {"url": "http://127.0.0.1:9/204", "timeout_ms": 1200, "expected": "204"},
         )
         self.assertTrue(result["ok"], result)
@@ -140,80 +137,46 @@ class LinkTest(unittest.TestCase):
 
     def test_10_async_ping_callback(self):
         link = self.make_link()
-        event = threading.Event()
-        box = {}
-        CB = ctypes.CFUNCTYPE(None, ctypes.c_int64, ctypes.c_char_p, ctypes.c_void_p)
-
-        def on_done(task_id, payload, user):
-            box["id"] = task_id
-            box["payload"] = json.loads(payload.decode()) if payload else None
-            event.set()
-
-        cb = CB(on_done)
-        self.api.lib.milib_link_ping_async.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_char_p,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-        ]
-        self.api.lib.milib_link_ping_async.restype = ctypes.c_int64
-        task_id = self.api.lib.milib_link_ping_async(
-            link,
-            json.dumps({"url": "http://127.0.0.1:9/204", "timeout_ms": 1000}).encode(),
-            cb,
-            None,
+        payload = self.api.link_ping_async(
+            link, {"url": "http://127.0.0.1:9/204", "timeout_ms": 1000}, timeout=10
         )
-        self.assertGreater(task_id, 0)
-        self.assertTrue(event.wait(10))
-        self.assertEqual(box["id"], task_id)
-        self.assertFalse(box["payload"]["ok"], box["payload"])
+        self.assertFalse(payload["ok"], payload)
+        self.assertNotEqual(payload["error"], 0)
 
     def test_11_remove_proxy_is_guarded(self):
         link = self.make_link()
         info = self.api.link_info(link)
         result = self.api.remove(info["name"])
         self.assertFalse(result["ok"], result)
-        self.assertIn("link", result["error"])
-
-    def run_async(self, fn_name, link, options):
-        event = threading.Event()
-        box = {}
-        CB = ctypes.CFUNCTYPE(None, ctypes.c_int64, ctypes.c_char_p, ctypes.c_void_p)
-
-        def on_done(task_id, payload, user):
-            box["id"] = task_id
-            box["payload"] = json.loads(payload.decode()) if payload else None
-            event.set()
-
-        fn = getattr(self.api.lib, fn_name)
-        fn.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_char_p,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-        ]
-        fn.restype = ctypes.c_int64
-        cb = CB(on_done)
-        task_id = fn(link, json.dumps(options).encode(), cb, None)
-        self.assertGreater(task_id, 0)
-        self.assertTrue(event.wait(10), "callback timeout")
-        self.assertEqual(box["id"], task_id)
-        return box["payload"]
 
     def test_13_async_speed_and_exit_ip(self):
         link = self.make_link()
-        speed = self.run_async(
-            "milib_link_speed_async",
+        speed = self.api.link_speed_async(
             link,
             {"url": "http://127.0.0.1:9/", "timeout_ms": 1200, "bytes": 1024},
+            timeout=10,
         )
         self.assertFalse(speed["ok"], speed)
-        exit_ip = self.run_async(
-            "milib_link_exit_ip_async",
-            link,
-            {"url": "http://127.0.0.1:9/ip", "timeout_ms": 1200},
+        exit_ip = self.api.link_exit_ip_async(
+            link, {"url": "http://127.0.0.1:9/ip", "timeout_ms": 1200}, timeout=10
         )
         self.assertFalse(exit_ip["ok"], exit_ip)
+
+    def test_14_task_poll_and_destroy(self):
+        link = self.make_link()
+        task = self.api.link_ping_task(
+            link, {"url": "http://127.0.0.1:9/204", "timeout_ms": 800}
+        )
+        self.assertTrue(task)
+        deadline = time.time() + 5
+        payload = self.api.task_poll(task)
+        while payload["state"] == 0 and time.time() < deadline:
+            time.sleep(0.02)
+            payload = self.api.task_poll(task)
+        self.assertNotEqual(payload["state"], 0, payload)
+        self.assertFalse(payload["ok"], payload)
+        self.assertNotEqual(payload["error"], 0, payload)
+        self.api.task_destroy(task)
 
     def test_12_destroy(self):
         link = self.api.link_create(DEAD_VLESS)

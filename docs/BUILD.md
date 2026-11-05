@@ -51,7 +51,8 @@ CGO_ENABLED=1 go build \
 
 - `dist/libmilib.so` — библиотека;
 - `dist/libmilib.h` — заголовок, сгенерированный cgo;
-- `include/milib.h` — публичный заголовок (используйте его).
+- `include/milib.h` и `include/milib_types.h` — публичные заголовки
+  (используйте их; `milib.h` подключает `milib_types.h`).
 
 `-p=2` ограничивает параллелизм: mihomo большой, на машинах с 1–2 ГБ RAM
 сборка с большим `-p` может упасть по памяти.
@@ -77,7 +78,7 @@ lib = ctypes.CDLL("dist/libmilib.so")
 ## Тесты
 
 ```bash
-make test-unit       # базовый ABI
+make test-unit       # Go-тесты задач + базовый ABI
 make test-links      # SharedVPNLink без сети
 make test-stress     # 100 циклов add/remove
 make test-c          # C-заголовок и линковка

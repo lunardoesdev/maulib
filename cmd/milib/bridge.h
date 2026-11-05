@@ -4,31 +4,47 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-/*
- * Callback trampoline.
- *
- * Go code must not call a C function pointer directly, so every task callback
- * is dispatched through milib_call_task_cb(), implemented in bridge.c.
- */
-typedef void (*milib_task_cb)(int64_t task_id, const char* result_json, void* user);
+#include "../../include/milib_types.h"
 
-void milib_call_task_cb(milib_task_cb cb, int64_t task_id, const char* result_json, void* user);
+/*
+ * Callback trampolines. Go code must not call a C function pointer directly,
+ * so every callback is dispatched through these helpers.
+ */
+void milib_call_task_cb(milib_task_cb cb, const milib_task_result* result, void* user);
+void milib_call_log_cb(milib_log_cb cb, milib_log_level level, const char* message, void* user);
 
 /* Static storage for milib_version(), which must not be freed by the caller. */
 const char* milib_version_cstr(void);
 
-/*
- * Opaque SharedVPNLink handle. The struct lives in C memory so the caller can
- * keep it across calls; the library keeps the actual state.
- */
-typedef struct milib_link {
+/* Opaque handles. The structs live in C memory and are owned by the caller. */
+struct milib_instance {
+    uint64_t handle;
+};
+
+struct milib_link {
     uint64_t id;
     uint64_t core;
-} milib_link;
+};
+
+struct milib_task {
+    uint64_t id;
+    uint64_t core;
+    void* pings;
+    size_t ping_count;
+};
+
+milib_instance* milib_instance_new(uint64_t handle);
+void milib_instance_free(milib_instance* instance);
+uint64_t milib_instance_get_handle(const milib_instance* instance);
 
 milib_link* milib_link_new(uint64_t id, uint64_t core);
 void milib_link_free(milib_link* link);
 uint64_t milib_link_get_id(const milib_link* link);
 uint64_t milib_link_get_core(const milib_link* link);
+
+milib_task* milib_task_new(uint64_t id, uint64_t core);
+void milib_task_free(milib_task* task);
+uint64_t milib_task_get_id(const milib_task* task);
+uint64_t milib_task_get_core(const milib_task* task);
 
 #endif /* MILIB_BRIDGE_H */
