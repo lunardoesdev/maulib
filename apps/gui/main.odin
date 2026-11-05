@@ -7,13 +7,14 @@ import "core:strconv"
 import "core:unicode/utf8"
 import rl "vendor:raylib"
 
-PAGE_SIZE :: 16
-WINDOW_W :: 1400
-WINDOW_H :: 900
+PAGE_SIZE :: 12
+WINDOW_W :: 2000
+WINDOW_H :: 1200
 
 g_font: rl.Font
 g_symbol_font: rl.Font
 g_has_symbol_font: bool
+g_truncate_buffer: [512]u8
 
 glyph_exists :: proc(font: rl.Font, r: rune) -> bool {
 	if font.glyphs == nil || font.glyphCount <= 0 {
@@ -130,6 +131,29 @@ measure_text :: proc(text: cstring, size: c.int) -> c.int {
 		flush(&segment, &segment_len, current_font, &width, size)
 	}
 	return c.int(width)
+}
+
+truncate_text :: proc(text: cstring, width: c.int, size: c.int) -> cstring {
+	s := string(text)
+	n := min(len(s), len(g_truncate_buffer) - 1)
+	copy(g_truncate_buffer[:n], s[:n])
+	g_truncate_buffer[n] = 0
+	if n == 0 || measure_text(cstring(&g_truncate_buffer[0]), size) <= width {
+		return cstring(&g_truncate_buffer[0])
+	}
+	low := 0
+	high := n
+	for low < high {
+		mid := (low + high + 1) / 2
+		g_truncate_buffer[mid] = 0
+		if measure_text(cstring(&g_truncate_buffer[0]), size) <= width {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	g_truncate_buffer[low] = 0
+	return cstring(&g_truncate_buffer[0])
 }
 
 Input_Field :: enum {
@@ -414,20 +438,20 @@ load_detail :: proc(app: ^App, proxy_id: i64) {
 button :: proc(rect: rl.Rectangle, label: cstring, enabled := true) -> bool {
 	mouse := rl.GetMousePosition()
 	hover := enabled && rl.CheckCollisionPointRec(mouse, rect)
-	color := !enabled ? rl.DARKGRAY : (hover ? rl.LIGHTGRAY : rl.GRAY)
+	color := !enabled ? rl.LIGHTGRAY : (hover ? rl.LIGHTGRAY : rl.GRAY)
 	rl.DrawRectangleRec(rect, color)
-	rl.DrawRectangleLinesEx(rect, 1, rl.DARKGRAY)
-	draw_text(label, c.int(rect.x + 10), c.int(rect.y + 8), 18,
-		enabled ? rl.BLACK : rl.DARKGRAY)
+	rl.DrawRectangleLinesEx(rect, 1, enabled ? rl.DARKGRAY : rl.GRAY)
+	draw_text(label, c.int(rect.x + 14), c.int(rect.y + 14), 32,
+		enabled ? rl.BLACK : rl.GRAY)
 	return hover && rl.IsMouseButtonPressed(.LEFT)
 }
 
 input_box :: proc(rect: rl.Rectangle, label: cstring, value: []u8, active: bool) {
-	draw_text(label, c.int(rect.x), c.int(rect.y - 20), 16, rl.DARKGRAY)
+	draw_text(label, c.int(rect.x), c.int(rect.y - 30), 28, rl.DARKGRAY)
 	rl.DrawRectangleRec(rect, rl.WHITE)
 	rl.DrawRectangleLinesEx(rect, active ? 2 : 1, active ? rl.BLUE : rl.LIGHTGRAY)
 	text := value[0] == 0 ? cstring("") : cstring(&value[0])
-	draw_text(text, c.int(rect.x + 8), c.int(rect.y + 9), 18, rl.BLACK)
+	draw_text(text, c.int(rect.x + 12), c.int(rect.y + 14), 32, rl.BLACK)
 }
 
 draw_wrapped :: proc(text: string, x, y, width: c.int, size: c.int, color: rl.Color) -> c.int {
@@ -542,7 +566,7 @@ main :: proc() {
 				append(&codepoints, r)
 			}
 		}
-		loaded := rl.LoadFontEx(cstring(raw_data(font_path)), 28,
+		loaded := rl.LoadFontEx(cstring(raw_data(font_path)), 52,
 			raw_data(codepoints), c.int(len(codepoints)))
 		if loaded.texture.id != 0 {
 			g_font = loaded
@@ -569,7 +593,7 @@ main :: proc() {
 				append(&codepoints, r)
 			}
 		}
-		loaded := rl.LoadFontEx(cstring(raw_data(symbol_path)), 28,
+		loaded := rl.LoadFontEx(cstring(raw_data(symbol_path)), 52,
 			raw_data(codepoints), c.int(len(codepoints)))
 		if loaded.texture.id != 0 {
 			g_symbol_font = loaded
@@ -586,18 +610,18 @@ main :: proc() {
 		}
 	}
 
-	group_list_rect := rl.Rectangle{x = 12, y = 70, width = 380, height = 110}
-	sub_list_rect := rl.Rectangle{x = 12, y = 220, width = 380, height = 340}
-	sub_url_rect := rl.Rectangle{x = 12, y = 600, width = 380, height = 38}
-	sub_prio_rect := rl.Rectangle{x = 12, y = 670, width = 110, height = 38}
-	sub_add_rect := rl.Rectangle{x = 134, y = 670, width = 120, height = 38}
-	sub_del_rect := rl.Rectangle{x = 266, y = 670, width = 126, height = 38}
+	group_list_rect := rl.Rectangle{x = 20, y = 124, width = 700, height = 180}
+	sub_list_rect := rl.Rectangle{x = 20, y = 364, width = 700, height = 470}
+	sub_url_rect := rl.Rectangle{x = 20, y = 900, width = 700, height = 56}
+	sub_prio_rect := rl.Rectangle{x = 20, y = 1000, width = 180, height = 56}
+	sub_add_rect := rl.Rectangle{x = 220, y = 1000, width = 200, height = 56}
+	sub_del_rect := rl.Rectangle{x = 440, y = 1000, width = 220, height = 56}
 
-	proxy_list_rect := rl.Rectangle{x = 410, y = 110, width = 978, height = 520}
-	detail_rect := rl.Rectangle{x = 410, y = 646, width = 978, height = 100}
-	proxy_link_rect := rl.Rectangle{x = 410, y = 780, width = 700, height = 38}
-	proxy_add_rect := rl.Rectangle{x = 1122, y = 780, width = 120, height = 38}
-	proxy_del_rect := rl.Rectangle{x = 1254, y = 780, width = 134, height = 38}
+	proxy_list_rect := rl.Rectangle{x = 760, y = 160, width = 1220, height = 700}
+	detail_rect := rl.Rectangle{x = 760, y = 900, width = 1220, height = 120}
+	proxy_link_rect := rl.Rectangle{x = 760, y = 1060, width = 700, height = 56}
+	proxy_add_rect := rl.Rectangle{x = 1480, y = 1060, width = 200, height = 56}
+	proxy_del_rect := rl.Rectangle{x = 1700, y = 1060, width = 280, height = 56}
 
 	screenshot_frames := 0
 	for !rl.WindowShouldClose() {
@@ -638,7 +662,7 @@ main :: proc() {
 
 		if rl.CheckCollisionPointRec(mouse, group_list_rect) && rl.IsMouseButtonPressed(.LEFT) {
 			y := mouse.y - group_list_rect.y
-			index := int(y / 30)
+			index := int(y / 52)
 			if index >= 0 && index < int(app.groups.count) {
 				id := app.groups.items[index].id
 				if id != app.selected_group {
@@ -653,13 +677,13 @@ main :: proc() {
 		if rl.CheckCollisionPointRec(mouse, sub_list_rect) {
 			wheel := rl.GetMouseWheelMove()
 			if wheel != 0 {
-				app.sub_scroll -= wheel * 30
-				max_scroll := max(f32(app.subs.count) * 30 - sub_list_rect.height, 0)
+				app.sub_scroll -= wheel * 52
+				max_scroll := max(f32(app.subs.count) * 52 - sub_list_rect.height, 0)
 				app.sub_scroll = clamp(app.sub_scroll, f32(0), max_scroll)
 			}
 			if rl.IsMouseButtonPressed(.LEFT) {
 				y := mouse.y - sub_list_rect.y + app.sub_scroll
-				index := int(y / 30)
+				index := int(y / 52)
 				if index >= 0 && index < int(app.subs.count) {
 					id := app.subs.items[index].id
 					if id != app.selected_sub {
@@ -672,12 +696,15 @@ main :: proc() {
 
 		if rl.CheckCollisionPointRec(mouse, proxy_list_rect) && rl.IsMouseButtonPressed(.LEFT) {
 			y := mouse.y - proxy_list_rect.y
-			index := int(y / 30)
+			index := int(y / 52)
 			if index >= 0 && index < int(app.proxies.count) {
 				load_detail(&app, app.proxies.items[index].id)
 				app.active_input = .NONE
 			}
 		}
+
+		rl.BeginDrawing()
+		rl.ClearBackground(rl.RAYWHITE)
 
 		if button(sub_add_rect, "Add sub") {
 			app.active_input = .NONE
@@ -700,8 +727,8 @@ main :: proc() {
 		if max_page < 0 {
 			max_page = 0
 		}
-		prev_rect := rl.Rectangle{x = 1180, y = 54, width = 90, height = 34}
-		next_rect := rl.Rectangle{x = 1280, y = 54, width = 100, height = 34}
+		prev_rect := rl.Rectangle{x = 1660, y = 70, width = 140, height = 50}
+		next_rect := rl.Rectangle{x = 1820, y = 70, width = 150, height = 50}
 		if button(prev_rect, "< Prev", app.page > 0) {
 			app.page -= 1
 			app.active_input = .NONE
@@ -713,11 +740,8 @@ main :: proc() {
 			reload_proxies(&app)
 		}
 
-		rl.BeginDrawing()
-		rl.ClearBackground(rl.RAYWHITE)
-
-		draw_text("mewnet subscription manager", 12, 14, 28, rl.DARKGRAY)
-		draw_text("Groups", 12, 44, 18, rl.DARKGRAY)
+		draw_text("mewnet subscription manager", 20, 20, 48, rl.DARKGRAY)
+		draw_text("Groups", 20, 84, 36, rl.DARKGRAY)
 
 		rl.DrawRectangleRec(group_list_rect, rl.WHITE)
 		rl.DrawRectangleLinesEx(group_list_rect, 1, rl.LIGHTGRAY)
@@ -726,14 +750,15 @@ main :: proc() {
 			item := &app.groups.items[i]
 			if item.id == app.selected_group {
 				rl.DrawRectangle(c.int(group_list_rect.x), c.int(gy),
-					c.int(group_list_rect.width), 30, rl.BEIGE)
+					c.int(group_list_rect.width), 52, rl.BEIGE)
 			}
 			group_label := fmt.ctprintf("%s  (priority %d)", cstr(item.name[:]), item.priority)
-			draw_text(group_label, c.int(group_list_rect.x + 8), c.int(gy + 6), 18, rl.BLACK)
-			gy += 30
+			draw_text(truncate_text(group_label, c.int(group_list_rect.width - 32), 32),
+				c.int(group_list_rect.x + 16), c.int(gy + 14), 32, rl.BLACK)
+			gy += 52
 		}
 
-		draw_text("Subscriptions in group", 12, 194, 18, rl.DARKGRAY)
+		draw_text("Subscriptions in group", 20, 324, 36, rl.DARKGRAY)
 		rl.DrawRectangleRec(sub_list_rect, rl.WHITE)
 		rl.DrawRectangleLinesEx(sub_list_rect, 1, rl.LIGHTGRAY)
 		rl.BeginScissorMode(c.int(sub_list_rect.x), c.int(sub_list_rect.y),
@@ -741,7 +766,7 @@ main :: proc() {
 		row_y := sub_list_rect.y - app.sub_scroll
 		for i in 0 ..< app.subs.count {
 			item := &app.subs.items[i]
-			if row_y + 30 >= sub_list_rect.y && row_y <= sub_list_rect.y + sub_list_rect.height {
+			if row_y + 52 >= sub_list_rect.y && row_y <= sub_list_rect.y + sub_list_rect.height {
 				if item.id == app.selected_sub {
 					rl.DrawRectangle(c.int(sub_list_rect.x), c.int(row_y),
 						c.int(sub_list_rect.width), 30, rl.BEIGE)
@@ -751,9 +776,10 @@ main :: proc() {
 					name = cstr(item.url[:])
 				}
 				label := fmt.ctprintf("[%d] %s", item.priority, name)
-				draw_text(label, c.int(sub_list_rect.x + 8), c.int(row_y + 6), 18, rl.BLACK)
+				draw_text(truncate_text(label, c.int(sub_list_rect.width - 32), 32),
+				c.int(sub_list_rect.x + 16), c.int(row_y + 14), 32, rl.BLACK)
 			}
-			row_y += 30
+			row_y += 52
 		}
 		rl.EndScissorMode()
 
@@ -767,10 +793,10 @@ main :: proc() {
 				break
 			}
 		}
-		draw_text(cstring(raw_data(group_name)), 410, 14, 24, rl.DARKGRAY)
+		draw_text(truncate_text(cstring(raw_data(group_name)), 800, 44), 760, 20, 44, rl.DARKGRAY)
 		page_label := fmt.ctprintf("proxies: %d  page %d/%d",
 			app.total_proxies, app.page + 1, max_page + 1)
-		draw_text(page_label, 410, 50, 18, rl.DARKGRAY)
+		draw_text(page_label, 760, 84, 30, rl.DARKGRAY)
 
 		rl.DrawRectangleRec(proxy_list_rect, rl.WHITE)
 		rl.DrawRectangleLinesEx(proxy_list_rect, 1, rl.LIGHTGRAY)
@@ -782,27 +808,31 @@ main :: proc() {
 			selected := item.id == app.selected_proxy
 			if selected {
 				rl.DrawRectangle(c.int(proxy_list_rect.x), c.int(py),
-					c.int(proxy_list_rect.width), 30, rl.BEIGE)
+					c.int(proxy_list_rect.width), 52, rl.BEIGE)
 			}
 			name := cstr(item.name[:])
 			if len(name) == 0 {
 				name = cstr(item.protocol[:])
 			}
-			draw_text(cstring(raw_data(name)), c.int(proxy_list_rect.x + 8), c.int(py + 6), 18, rl.BLACK)
-			draw_text(cstring(raw_data(cstr(item.protocol[:]))), c.int(proxy_list_rect.x + 390), c.int(py + 6), 18, rl.DARKGRAY)
+			draw_text(truncate_text(cstring(raw_data(name)), 390, 30),
+				c.int(proxy_list_rect.x + 16), c.int(py + 14), 30, rl.BLACK)
+			draw_text(truncate_text(cstring(raw_data(cstr(item.protocol[:]))), 90, 30),
+				c.int(proxy_list_rect.x + 430), c.int(py + 14), 30, rl.DARKGRAY)
 			addr := fmt.ctprintf("%s:%d", cstr(item.server[:]), item.port)
-			draw_text(addr, c.int(proxy_list_rect.x + 470), c.int(py + 6), 18, rl.DARKGRAY)
+			draw_text(truncate_text(addr, 320, 30),
+				c.int(proxy_list_rect.x + 540), c.int(py + 14), 30, rl.DARKGRAY)
 			rating := fmt.ctprintf("r=%d", item.rating)
-			draw_text(rating, c.int(proxy_list_rect.x + 770), c.int(py + 6), 18,
+			draw_text(truncate_text(rating, 60, 30), c.int(proxy_list_rect.x + 880), c.int(py + 14), 30,
 				item.rating > 0 ? rl.DARKGREEN : (item.rating < 0 ? rl.MAROON : rl.DARKGRAY))
 			alive := fmt.ctprintf("%s%s", item.alive ? "alive" : "dead", item.manual ? " manual" : "")
-			draw_text(alive, c.int(proxy_list_rect.x + 840), c.int(py + 6), 18,
+			draw_text(truncate_text(alive, 100, 30), c.int(proxy_list_rect.x + 960), c.int(py + 14), 30,
 				item.alive ? rl.DARKGREEN : rl.MAROON)
 			if item.last_delay_ms > 0 {
 				delay := fmt.ctprintf("%ums", item.last_delay_ms)
-				draw_text(delay, c.int(proxy_list_rect.x + 940), c.int(py + 6), 18, rl.DARKGRAY)
+				draw_text(truncate_text(delay, 100, 30),
+				c.int(proxy_list_rect.x + 1060), c.int(py + 14), 30, rl.DARKGRAY)
 			}
-			py += 30
+			py += 52
 		}
 		rl.EndScissorMode()
 
@@ -814,19 +844,19 @@ main :: proc() {
 				app.detail.port, app.detail.rating,
 				app.detail.alive ? "alive" : "dead",
 				app.detail.manual ? " manual" : "")
-			draw_text(head, c.int(detail_rect.x + 10), c.int(detail_rect.y + 8), 18, rl.BLACK)
+			draw_text(head, c.int(detail_rect.x + 16), c.int(detail_rect.y + 14), 30, rl.BLACK)
 			draw_wrapped(cstr(app.detail.link[:]), c.int(detail_rect.x + 10),
-				c.int(detail_rect.y + 34), c.int(detail_rect.width - 20), 16, rl.DARKGRAY)
+				c.int(detail_rect.y + 54), c.int(detail_rect.width - 32), 26, rl.DARKGRAY)
 		} else {
-			draw_text("Select a proxy to see its link", c.int(detail_rect.x + 10),
-				c.int(detail_rect.y + 26), 18, rl.GRAY)
+			draw_text("Select a proxy to see its link", c.int(detail_rect.x + 16),
+				c.int(detail_rect.y + 50), 30, rl.GRAY)
 		}
 
 		input_box(proxy_link_rect, "Manual proxy link", app.proxy_link[:], app.active_input == .PROXY_LINK)
 
 		status_text := app.status[0] == 0 ? cstring("") : cstring(&app.status[0])
-		rl.DrawRectangle(0, WINDOW_H - 34, WINDOW_W, 34, rl.LIGHTGRAY)
-		draw_text(status_text, 12, WINDOW_H - 27, 18, rl.DARKGRAY)
+		rl.DrawRectangle(0, WINDOW_H - 60, WINDOW_W, 60, rl.LIGHTGRAY)
+		draw_text(status_text, 20, WINDOW_H - 46, 30, rl.DARKGRAY)
 
 		rl.EndDrawing()
 		if len(screenshot_path) > 0 {
