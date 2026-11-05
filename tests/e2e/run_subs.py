@@ -116,6 +116,27 @@ def main():
         check("xray config stored", xray_row is not None, "")
         check("dead config stored", dead_row is not None, "")
 
+        manual_link = (
+            "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@127.0.0.1:9"
+            "?encryption=none&security=none&type=tcp#manual-e2e"
+        )
+        check("add manual proxy", run(db, "proxy", "add", "1", manual_link).returncode == 0)
+        # Force a real 200 (not 304) to exercise generation cleanup.
+        updated_path = os.path.join(workdir, "plain.txt")
+        with open(updated_path, "w", encoding="utf-8") as fh:
+            fh.write(plain + "# refreshed\n")
+        future = time.time() + 5
+        os.utime(updated_path, (future, future))
+        run(db, "fetch", "1")
+        manual_row = conn.execute(
+            "SELECT id, manual FROM proxies WHERE name = 'manual-e2e' LIMIT 1"
+        ).fetchone()
+        check("manual proxy survives fetch", manual_row is not None and manual_row["manual"] == 1,
+              dict(manual_row) if manual_row else "missing")
+        if manual_row:
+            check("remove manual proxy",
+                  run(db, "proxy", "rm", str(manual_row["id"])).returncode == 0)
+
         if xray_row:
             proc = run(db, "test", str(xray_row["id"]))
             check("live proxy test", proc.returncode == 0, proc.stderr)

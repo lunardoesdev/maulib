@@ -68,6 +68,13 @@ make subs
 # build/subscriptions/milib-subs
 ```
 
+GUI на Odin/raylib:
+
+```bash
+make gui
+# build/milib-gui
+```
+
 Результат:
 
 - `dist/libmilib.so` — библиотека;

@@ -5,13 +5,17 @@ GO      := $(MISE) exec -- go
 CC      := $(MISE) exec -- clang
 PYTHON  ?= python3
 
+X11_LIB  := $(shell ldconfig -p 2>/dev/null | awk '/libX11.so.6 /{print $$NF; exit}')
+XCB_LIB  := $(shell ldconfig -p 2>/dev/null | awk '/libxcb.so.1 /{print $$NF; exit}')
+XAU_LIB  := $(shell ldconfig -p 2>/dev/null | awk '/libXau.so.6 /{print $$NF; exit}')
+
 export GOPATH  ?= $(HOME)/.cache/milib/gopath
 export GOCACHE ?= $(HOME)/.cache/milib/gocache
 export CGO_ENABLED = 1
 
 LDFLAGS = -s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33
 
-.PHONY: all deps build subs test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
+.PHONY: all deps build subs gui test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
 
 all: build
 
@@ -41,6 +45,20 @@ test-subs: subs
 
 test-e2e-subs: subs
 	$(PYTHON) tests/e2e/run_subs.py
+
+# Odin/raylib GUI. System libX11 has no unversioned dev symlink here, so the
+# target creates a small local symlink directory for the linker.
+gui: subs
+	mkdir -p build/gui/syslib
+	ln -sf "$(X11_LIB)" build/gui/syslib/libX11.so
+	ln -sf "$(X11_LIB)" build/gui/syslib/libX11.so.6
+	ln -sf "$(XCB_LIB)" build/gui/syslib/libxcb.so
+	ln -sf "$(XCB_LIB)" build/gui/syslib/libxcb.so.1
+	ln -sf "$(XAU_LIB)" build/gui/syslib/libXau.so
+	ln -sf "$(XAU_LIB)" build/gui/syslib/libXau.so.6
+	LIBRARY_PATH="$(CURDIR)/build/gui/syslib" $(MISE) exec -- odin build gui \
+		-out:build/milib-gui \
+		-extra-linker-flags:"-L$(CURDIR)/build/subscriptions -L$(CURDIR)/dist -lmilib_subs -lmilib -Wl,-rpath,$(CURDIR)/build/subscriptions:$(CURDIR)/dist"
 
 test-stress: build
 	$(PYTHON) tests/python/test_stress.py

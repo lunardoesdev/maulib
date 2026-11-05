@@ -232,10 +232,29 @@ make test-e2e-subs
 ```
 
 ```
-14 passed, 0 failed
+17 passed, 0 failed
 ```
 
-Проверено: plain/base64 ingest, 4 конфига в SQLite, живой прокси через
-локальный Xray (`alive=1`, `rating 0->1`, метаданные), мёртвый прокси
+Проверено: plain/base64 ingest, 4 конфига в SQLite, ручной прокси
+(`manual=1`) переживает повторный fetch с generation-cleanup, живой прокси
+через локальный Xray (`alive=1`, `rating 0->1`, метаданные), мёртвый прокси
 (`rating 0->-1`, повторный тест в тот же день не меняет рейтинг),
 `test_events`.
+
+## 9. GUI на Odin/raylib
+
+Сборка:
+
+```bash
+make gui
+```
+
+Проверено:
+
+- `odin build` с `vendor:raylib` и `libmilib_subs`;
+- запуск окна 1200x760 на текущем DISPLAY;
+- GUI использует `milib_subs_load_proxy_summaries` (страница без `link`) и
+  `milib_subs_get_proxy` только для выбранной записи;
+- добавление/удаление подписок и ручных прокси идёт через публичное API
+  `libmilib_subs`, без прямых SQL-запросов из GUI;
+- ручные прокси (`manual=1`) не удаляются generation-cleanup при fetch.

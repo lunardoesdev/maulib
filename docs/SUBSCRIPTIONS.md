@@ -39,6 +39,9 @@ CMake использует:
 ./build/subscriptions/milib-subs --db data/subs.db --limit 10 --window 240 run
 
 ./build/subscriptions/milib-subs --db data/subs.db proxies --limit 20
+./build/subscriptions/milib-subs --db data/subs.db proxy add 1 'vless://...'
+./build/subscriptions/milib-subs --db data/subs.db proxy rm 42
+./build/subscriptions/milib-subs --db data/subs.db proxy show 42
 ./build/subscriptions/milib-subs --db data/subs.db stats
 ```
 
@@ -199,5 +202,17 @@ milib_subs_test_result tested = milib_subs_test_next(opened.db, m);
 
 milib_subs_close(opened.db);
 ```
+
+Для GUI добавлены:
+
+- `milib_subs_load_proxy_summaries` — страница без полной `link`;
+- `milib_subs_get_proxy` — одна полная запись по id;
+- `milib_subs_add_proxy` — ручной прокси (`manual = 1`);
+- `milib_subs_remove_proxy`;
+- `milib_subs_count_proxies`.
+
+Ручные прокси не удаляются generation-cleanup, если их нет в подписке:
+`DELETE ... AND manual = 0`. Если ссылка снова появляется в подписке, она
+становится управляемой (`manual = 0`).
 
 Полный список — в `subscriptions/include/milib_subs.h`.

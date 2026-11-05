@@ -1,5 +1,6 @@
 #include "milib_subs_internal.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -35,6 +36,7 @@ static const char* k_schema =
     " port INTEGER NOT NULL DEFAULT 0,"
     " rating INTEGER NOT NULL DEFAULT 0,"
     " alive INTEGER NOT NULL DEFAULT 0,"
+    " manual INTEGER NOT NULL DEFAULT 0,"
     " last_tested_at INTEGER,"
     " last_delay_ms INTEGER,"
     " last_error TEXT NOT NULL DEFAULT '',"
@@ -87,6 +89,25 @@ static void copy_config_string(char* dst, size_t dst_size, const char* src, cons
     }
     memcpy(dst, value, len);
     dst[len] = '\0';
+}
+
+static int table_has_column(sqlite3* db, const char* table, const char* column) {
+    char sql[128];
+    snprintf(sql, sizeof(sql), "PRAGMA table_info(%s)", table);
+    sqlite3_stmt* stmt = NULL;
+    if (sqlite3_prepare_v2(db, sql, -1, &stmt, NULL) != SQLITE_OK) {
+        return 0;
+    }
+    int found = 0;
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* name = (const char*)sqlite3_column_text(stmt, 1);
+        if (name != NULL && strcmp(name, column) == 0) {
+            found = 1;
+            break;
+        }
+    }
+    sqlite3_finalize(stmt);
+    return found;
 }
 
 milib_subs_open_result milib_subs_open(const milib_subs_config* config) {
@@ -144,7 +165,11 @@ milib_subs_open_result milib_subs_open(const milib_subs_config* config) {
     if (subs_db_exec(db->db, "PRAGMA journal_mode = WAL;", &err) != 0 ||
         subs_db_exec(db->db, "PRAGMA synchronous = NORMAL;", &err) != 0 ||
         subs_db_exec(db->db, "PRAGMA foreign_keys = ON;", &err) != 0 ||
-        subs_db_exec(db->db, k_schema, &err) != 0) {
+        subs_db_exec(db->db, k_schema, &err) != 0 ||
+        (!table_has_column(db->db, "proxies", "manual") &&
+         subs_db_exec(db->db,
+                      "ALTER TABLE proxies ADD COLUMN manual INTEGER NOT NULL DEFAULT 0;",
+                      &err) != 0)) {
         result.error = err;
         sqlite3_close(db->db);
         pthread_mutex_destroy(&db->rate_lock);
@@ -388,11 +413,11 @@ milib_subs_proxy_list milib_subs_load_proxies(milib_subs* db,
     }
 
     const char* sql_all =
-        "SELECT id,subscription_id,link,name,protocol,server,port,rating,alive,"
+        "SELECT id,subscription_id,link,name,protocol,server,port,rating,alive,manual,"
         "last_tested_at,last_delay_ms,last_error FROM proxies"
         " ORDER BY id ASC LIMIT ? OFFSET ?";
     const char* sql_one =
-        "SELECT id,subscription_id,link,name,protocol,server,port,rating,alive,"
+        "SELECT id,subscription_id,link,name,protocol,server,port,rating,alive,manual,"
         "last_tested_at,last_delay_ms,last_error FROM proxies"
         " WHERE subscription_id=? ORDER BY id ASC LIMIT ? OFFSET ?";
 
@@ -433,9 +458,10 @@ milib_subs_proxy_list milib_subs_load_proxies(milib_subs* db,
         item->port = sqlite3_column_int(stmt, 6);
         item->rating = sqlite3_column_int(stmt, 7);
         item->alive = sqlite3_column_int(stmt, 8) != 0;
-        item->last_tested_at = sqlite3_column_int64(stmt, 9);
-        item->last_delay_ms = (unsigned)sqlite3_column_int64(stmt, 10);
-        subs_db_copy_text(stmt, 11, item->last_error, sizeof(item->last_error));
+        item->manual = sqlite3_column_int(stmt, 9) != 0;
+        item->last_tested_at = sqlite3_column_int64(stmt, 10);
+        item->last_delay_ms = (unsigned)sqlite3_column_int64(stmt, 11);
+        subs_db_copy_text(stmt, 12, item->last_error, sizeof(item->last_error));
     }
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
@@ -452,6 +478,262 @@ milib_subs_proxy_list milib_subs_load_proxies(milib_subs* db,
 
 void milib_subs_unload_proxies(milib_subs_proxy_list list) {
     free(list.items);
+}
+
+milib_subs_proxy_summary_list milib_subs_load_proxy_summaries(milib_subs* db,
+                                                               int64_t subscription_id,
+                                                               size_t limit,
+                                                               size_t offset) {
+    milib_subs_proxy_summary_list result;
+    memset(&result, 0, sizeof(result));
+    if (db == NULL) {
+        result.error = subs_make_error(MILIB_ERROR_INVALID_ARGUMENT, "db is required");
+        return result;
+    }
+    if (limit == 0) {
+        limit = 50;
+    }
+    if (limit > 1000) {
+        limit = 1000;
+    }
+
+    milib_error err;
+    subs_clear_error(&err);
+    const char* count_all = "SELECT COUNT(*) FROM proxies";
+    const char* count_one = "SELECT COUNT(*) FROM proxies WHERE subscription_id=?";
+    sqlite3_stmt* count_stmt = NULL;
+    if (subs_db_prepare(db->db, &count_stmt,
+                        subscription_id > 0 ? count_one : count_all, &err) != 0) {
+        result.error = err;
+        return result;
+    }
+    if (subscription_id > 0) {
+        sqlite3_bind_int64(count_stmt, 1, subscription_id);
+    }
+    size_t total = 0;
+    if (sqlite3_step(count_stmt) == SQLITE_ROW) {
+        total = (size_t)sqlite3_column_int64(count_stmt, 0);
+    }
+    sqlite3_finalize(count_stmt);
+    if (total > limit) {
+        total = limit;
+    }
+
+    const char* sql_all =
+        "SELECT id,subscription_id,name,protocol,server,port,rating,alive,manual,"
+        "last_tested_at,last_delay_ms,last_error FROM proxies"
+        " ORDER BY id ASC LIMIT ? OFFSET ?";
+    const char* sql_one =
+        "SELECT id,subscription_id,name,protocol,server,port,rating,alive,manual,"
+        "last_tested_at,last_delay_ms,last_error FROM proxies"
+        " WHERE subscription_id=? ORDER BY id ASC LIMIT ? OFFSET ?";
+    sqlite3_stmt* stmt = NULL;
+    if (subs_db_prepare(db->db, &stmt,
+                        subscription_id > 0 ? sql_one : sql_all, &err) != 0) {
+        result.error = err;
+        return result;
+    }
+    int index = 1;
+    if (subscription_id > 0) {
+        sqlite3_bind_int64(stmt, index++, subscription_id);
+    }
+    sqlite3_bind_int64(stmt, index++, (int64_t)limit);
+    sqlite3_bind_int64(stmt, index++, (int64_t)offset);
+
+    milib_subs_proxy_summary* items = NULL;
+    if (total > 0) {
+        items = (milib_subs_proxy_summary*)calloc(total, sizeof(milib_subs_proxy_summary));
+        if (items == NULL) {
+            sqlite3_finalize(stmt);
+            result.error = subs_make_error(MILIB_ERROR_FAILED, "out of memory");
+            return result;
+        }
+    }
+    size_t used = 0;
+    int rc;
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW && used < total) {
+        milib_subs_proxy_summary* item = &items[used++];
+        item->id = sqlite3_column_int64(stmt, 0);
+        item->subscription_id = sqlite3_column_int64(stmt, 1);
+        subs_db_copy_text(stmt, 2, item->name, sizeof(item->name));
+        subs_db_copy_text(stmt, 3, item->protocol, sizeof(item->protocol));
+        subs_db_copy_text(stmt, 4, item->server, sizeof(item->server));
+        item->port = sqlite3_column_int(stmt, 5);
+        item->rating = sqlite3_column_int(stmt, 6);
+        item->alive = sqlite3_column_int(stmt, 7) != 0;
+        item->manual = sqlite3_column_int(stmt, 8) != 0;
+        item->last_tested_at = sqlite3_column_int64(stmt, 9);
+        item->last_delay_ms = (unsigned)sqlite3_column_int64(stmt, 10);
+        subs_db_copy_text(stmt, 11, item->last_error, sizeof(item->last_error));
+    }
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        free(items);
+        result.error = subs_db_error(db->db, "load proxy summaries");
+        return result;
+    }
+    result.items = items;
+    result.count = used;
+    result.error = subs_make_error(MILIB_ERROR_NONE, "");
+    return result;
+}
+
+void milib_subs_unload_proxy_summaries(milib_subs_proxy_summary_list list) {
+    free(list.items);
+}
+
+milib_error milib_subs_get_proxy(milib_subs* db, int64_t proxy_id,
+                                 milib_subs_proxy* out) {
+    if (db == NULL || out == NULL) {
+        return subs_make_error(MILIB_ERROR_INVALID_ARGUMENT, "db and out are required");
+    }
+    memset(out, 0, sizeof(*out));
+    sqlite3_stmt* stmt = NULL;
+    milib_error err;
+    subs_clear_error(&err);
+    if (subs_db_prepare(db->db, &stmt,
+                        "SELECT id,subscription_id,link,name,protocol,server,port,"
+                        "rating,alive,manual,last_tested_at,last_delay_ms,last_error"
+                        " FROM proxies WHERE id=?",
+                        &err) != 0) {
+        return err;
+    }
+    sqlite3_bind_int64(stmt, 1, proxy_id);
+    int rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        if (rc == SQLITE_DONE) {
+            return subs_make_error(MILIB_ERROR_NOT_FOUND, "proxy %lld not found",
+                                   (long long)proxy_id);
+        }
+        return subs_db_error(db->db, "get proxy");
+    }
+    out->id = sqlite3_column_int64(stmt, 0);
+    out->subscription_id = sqlite3_column_int64(stmt, 1);
+    subs_db_copy_text(stmt, 2, out->link, sizeof(out->link));
+    subs_db_copy_text(stmt, 3, out->name, sizeof(out->name));
+    subs_db_copy_text(stmt, 4, out->protocol, sizeof(out->protocol));
+    subs_db_copy_text(stmt, 5, out->server, sizeof(out->server));
+    out->port = sqlite3_column_int(stmt, 6);
+    out->rating = sqlite3_column_int(stmt, 7);
+    out->alive = sqlite3_column_int(stmt, 8) != 0;
+    out->manual = sqlite3_column_int(stmt, 9) != 0;
+    out->last_tested_at = sqlite3_column_int64(stmt, 10);
+    out->last_delay_ms = (unsigned)sqlite3_column_int64(stmt, 11);
+    subs_db_copy_text(stmt, 12, out->last_error, sizeof(out->last_error));
+    sqlite3_finalize(stmt);
+    return subs_make_error(MILIB_ERROR_NONE, "");
+}
+
+milib_error milib_subs_add_proxy(milib_subs* db, int64_t subscription_id,
+                                 const char* link) {
+    if (db == NULL || link == NULL || link[0] == '\0') {
+        return subs_make_error(MILIB_ERROR_INVALID_ARGUMENT, "db and link are required");
+    }
+    sqlite3_stmt* stmt = NULL;
+    milib_error err;
+    subs_clear_error(&err);
+    if (subs_db_prepare(db->db, &stmt,
+                        "SELECT generation FROM subscriptions WHERE id=?", &err) != 0) {
+        return err;
+    }
+    sqlite3_bind_int64(stmt, 1, subscription_id);
+    int rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        if (rc == SQLITE_DONE) {
+            return subs_make_error(MILIB_ERROR_NOT_FOUND, "subscription %lld not found",
+                                   (long long)subscription_id);
+        }
+        return subs_db_error(db->db, "select subscription generation");
+    }
+    int64_t generation = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+
+    uint8_t hash[32];
+    subs_sha256(link, strlen(link), hash);
+    char name[MILIB_NAME_MAX];
+    char protocol[MILIB_TYPE_MAX];
+    char server[MILIB_HOST_MAX];
+    int port = 0;
+    subs_link_hint(link, name, sizeof(name), protocol, sizeof(protocol),
+                   server, sizeof(server), &port);
+
+    if (subs_db_prepare(db->db, &stmt,
+                        "INSERT INTO proxies(subscription_id,link,link_hash,name,protocol,server,port,"
+                        "last_seen_generation,manual) VALUES(?,?,?,?,?,?,?,?,1)"
+                        " ON CONFLICT(subscription_id,link_hash) DO UPDATE SET"
+                        " link=excluded.link,"
+                        " name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE proxies.name END,"
+                        " protocol=CASE WHEN excluded.protocol<>'' THEN excluded.protocol ELSE proxies.protocol END,"
+                        " server=CASE WHEN excluded.server<>'' THEN excluded.server ELSE proxies.server END,"
+                        " port=CASE WHEN excluded.port>0 THEN excluded.port ELSE proxies.port END,"
+                        " manual=1",
+                        &err) != 0) {
+        return err;
+    }
+    sqlite3_bind_int64(stmt, 1, subscription_id);
+    subs_db_bind_text(stmt, 2, link);
+    subs_db_bind_blob(stmt, 3, hash, (int)sizeof(hash));
+    subs_db_bind_text(stmt, 4, name);
+    subs_db_bind_text(stmt, 5, protocol);
+    subs_db_bind_text(stmt, 6, server);
+    sqlite3_bind_int(stmt, 7, port);
+    sqlite3_bind_int64(stmt, 8, generation);
+    rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        return subs_db_error(db->db, "add proxy");
+    }
+    return subs_make_error(MILIB_ERROR_NONE, "");
+}
+
+milib_error milib_subs_remove_proxy(milib_subs* db, int64_t proxy_id) {
+    if (db == NULL) {
+        return subs_make_error(MILIB_ERROR_INVALID_ARGUMENT, "db is required");
+    }
+    sqlite3_stmt* stmt = NULL;
+    milib_error err;
+    subs_clear_error(&err);
+    if (subs_db_prepare(db->db, &stmt, "DELETE FROM proxies WHERE id=?", &err) != 0) {
+        return err;
+    }
+    sqlite3_bind_int64(stmt, 1, proxy_id);
+    int rc = sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_DONE) {
+        return subs_db_error(db->db, "remove proxy");
+    }
+    if (sqlite3_changes(db->db) == 0) {
+        return subs_make_error(MILIB_ERROR_NOT_FOUND, "proxy %lld not found",
+                               (long long)proxy_id);
+    }
+    return subs_make_error(MILIB_ERROR_NONE, "");
+}
+
+milib_error milib_subs_count_proxies(milib_subs* db, int64_t subscription_id,
+                                     int64_t* out_count) {
+    if (db == NULL || out_count == NULL) {
+        return subs_make_error(MILIB_ERROR_INVALID_ARGUMENT, "db and out_count are required");
+    }
+    *out_count = 0;
+    const char* sql_all = "SELECT COUNT(*) FROM proxies";
+    const char* sql_one = "SELECT COUNT(*) FROM proxies WHERE subscription_id=?";
+    sqlite3_stmt* stmt = NULL;
+    milib_error err;
+    subs_clear_error(&err);
+    if (subs_db_prepare(db->db, &stmt,
+                        subscription_id > 0 ? sql_one : sql_all, &err) != 0) {
+        return err;
+    }
+    if (subscription_id > 0) {
+        sqlite3_bind_int64(stmt, 1, subscription_id);
+    }
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        *out_count = sqlite3_column_int64(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return subs_make_error(MILIB_ERROR_NONE, "");
 }
 
 milib_subs_stats milib_subs_get_stats(milib_subs* db) {

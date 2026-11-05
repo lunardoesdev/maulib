@@ -520,7 +520,8 @@ milib_subs_fetch_result milib_subs_fetch(milib_subs* db, int64_t subscription_id
                         " name=CASE WHEN name='' THEN ? ELSE name END,"
                         " protocol=CASE WHEN protocol='' THEN ? ELSE protocol END,"
                         " server=CASE WHEN server='' THEN ? ELSE server END,"
-                        " port=CASE WHEN port=0 THEN ? ELSE port END"
+                        " port=CASE WHEN port=0 THEN ? ELSE port END,"
+                        " manual=0"
                         " WHERE subscription_id=? AND link_hash=?",
                         &err) != 0) {
         if (ctx.insert_proxy != NULL) sqlite3_finalize(ctx.insert_proxy);
@@ -604,7 +605,8 @@ milib_subs_fetch_result milib_subs_fetch(milib_subs* db, int64_t subscription_id
 
     sqlite3_stmt* delete_stmt = NULL;
     if (subs_db_prepare(db->db, &delete_stmt,
-                        "DELETE FROM proxies WHERE subscription_id=? AND last_seen_generation<>?",
+                        "DELETE FROM proxies WHERE subscription_id=? AND last_seen_generation<>?"
+                        " AND manual=0",
                         &err) != 0) {
         sqlite3_finalize(ctx.insert_proxy);
         sqlite3_finalize(ctx.seen_proxy);

@@ -70,6 +70,9 @@ static void usage(const char* argv0) {
             "  test [ID]\n"
             "  run\n"
             "  proxies [--sub ID] [--limit N] [--offset N]\n"
+            "  proxy add SUB_ID LINK\n"
+            "  proxy rm ID\n"
+            "  proxy show ID\n"
             "  stats\n",
             argv0);
 }
@@ -149,6 +152,50 @@ static int command_sub(milib_subs* db, int argc, char** argv) {
             }
         }
         milib_subs_unload_subscriptions(list);
+        return 0;
+    }
+    usage(argv[0]);
+    return 2;
+}
+
+static int command_proxy(milib_subs* db, int argc, char** argv) {
+    if (argc < 2) {
+        usage(argv[0]);
+        return 2;
+    }
+    if (strcmp(argv[1], "add") == 0) {
+        if (argc < 4) return 2;
+        milib_error err = milib_subs_add_proxy(db, atoll(argv[2]), argv[3]);
+        if (err.code != MILIB_ERROR_NONE) {
+            print_error("proxy add", err);
+            return 1;
+        }
+        printf("proxy added\n");
+        return 0;
+    }
+    if (strcmp(argv[1], "rm") == 0) {
+        if (argc < 3) return 2;
+        milib_error err = milib_subs_remove_proxy(db, atoll(argv[2]));
+        if (err.code != MILIB_ERROR_NONE) {
+            print_error("proxy rm", err);
+            return 1;
+        }
+        printf("proxy removed\n");
+        return 0;
+    }
+    if (strcmp(argv[1], "show") == 0) {
+        if (argc < 3) return 2;
+        milib_subs_proxy proxy;
+        milib_error err = milib_subs_get_proxy(db, atoll(argv[2]), &proxy);
+        if (err.code != MILIB_ERROR_NONE) {
+            print_error("proxy show", err);
+            return 1;
+        }
+        printf("id=%lld sub=%lld rating=%d alive=%d manual=%d name=%s server=%s port=%d\n",
+               (long long)proxy.id, (long long)proxy.subscription_id,
+               proxy.rating, proxy.alive ? 1 : 0, proxy.manual ? 1 : 0,
+               proxy.name, proxy.server, proxy.port);
+        printf("%s\n", proxy.link);
         return 0;
     }
     usage(argv[0]);
@@ -235,6 +282,8 @@ int main(int argc, char** argv) {
     int rc = 0;
     if (strcmp(command, "sub") == 0) {
         rc = command_sub(db, argc - i + 1, argv + i - 1);
+    } else if (strcmp(command, "proxy") == 0) {
+        rc = command_proxy(db, argc - i + 1, argv + i - 1);
     } else if (strcmp(command, "fetch") == 0) {
         if (i < argc && strcmp(argv[i], "--due") == 0) {
             milib_subs_fetch_result result = milib_subs_fetch_due(db);

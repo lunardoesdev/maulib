@@ -66,6 +66,19 @@ int main(void) {
     r = milib_subs_record_test(db, proxy_id, false, 0, "boom");
     failures += (r.error.code != MILIB_ERROR_NONE || r.rating_delta != 0 || r.rating_after != 0);
 
+    err = milib_subs_add_proxy(db, sub_id,
+        "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@127.0.0.1:9?encryption=none&security=none&type=tcp#manual");
+    failures += (err.code != MILIB_ERROR_NONE);
+    int64_t count = 0;
+    err = milib_subs_count_proxies(db, sub_id, &count);
+    failures += (err.code != MILIB_ERROR_NONE || count != 2);
+    int manual_id = query_int(raw, "SELECT id FROM proxies WHERE name='manual' LIMIT 1");
+    milib_subs_proxy manual;
+    err = milib_subs_get_proxy(db, manual_id, &manual);
+    failures += (err.code != MILIB_ERROR_NONE || !manual.manual);
+    err = milib_subs_remove_proxy(db, manual_id);
+    failures += (err.code != MILIB_ERROR_NONE);
+
     int rating = query_int(raw, "SELECT rating FROM proxies LIMIT 1");
     int events = query_int(raw, "SELECT COUNT(*) FROM test_events");
     failures += (rating != 0);

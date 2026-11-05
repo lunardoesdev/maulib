@@ -85,6 +85,7 @@ typedef struct milib_subs_proxy {
     int port;
     int rating;
     bool alive;
+    bool manual;
     int64_t last_tested_at;
     unsigned last_delay_ms;
     char last_error[MILIB_ERROR_MAX];
@@ -101,6 +102,39 @@ MILIB_SUBS_API milib_subs_proxy_list milib_subs_load_proxies(milib_subs* db,
                                                              size_t limit,
                                                              size_t offset);
 MILIB_SUBS_API void milib_subs_unload_proxies(milib_subs_proxy_list list);
+
+typedef struct milib_subs_proxy_summary {
+    int64_t id;
+    int64_t subscription_id;
+    char name[MILIB_NAME_MAX];
+    char protocol[MILIB_TYPE_MAX];
+    char server[MILIB_HOST_MAX];
+    int port;
+    int rating;
+    bool alive;
+    bool manual;
+    int64_t last_tested_at;
+    unsigned last_delay_ms;
+    char last_error[MILIB_ERROR_MAX];
+} milib_subs_proxy_summary;
+
+typedef struct milib_subs_proxy_summary_list {
+    milib_error error;
+    milib_subs_proxy_summary* items;
+    size_t count;
+} milib_subs_proxy_summary_list;
+
+MILIB_SUBS_API milib_subs_proxy_summary_list milib_subs_load_proxy_summaries(
+    milib_subs* db, int64_t subscription_id, size_t limit, size_t offset);
+MILIB_SUBS_API void milib_subs_unload_proxy_summaries(milib_subs_proxy_summary_list list);
+
+MILIB_SUBS_API milib_error milib_subs_get_proxy(milib_subs* db, int64_t proxy_id,
+                                                milib_subs_proxy* out);
+MILIB_SUBS_API milib_error milib_subs_add_proxy(milib_subs* db, int64_t subscription_id,
+                                                const char* link);
+MILIB_SUBS_API milib_error milib_subs_remove_proxy(milib_subs* db, int64_t proxy_id);
+MILIB_SUBS_API milib_error milib_subs_count_proxies(milib_subs* db, int64_t subscription_id,
+                                                    int64_t* out_count);
 
 /* Fetch. */
 typedef struct milib_subs_fetch_result {

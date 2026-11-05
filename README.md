@@ -210,6 +210,21 @@ make subs
 
 Подробности — в [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
 
+## GUI на Odin
+
+Есть простая raylib-программа:
+
+```bash
+make gui
+./build/milib-gui --db data/subs.db
+```
+
+Она умеет добавлять/удалять подписки, листать прокси страницами, смотреть
+полную ссылку выбранного конфига, добавлять ручные прокси и удалять их.
+GUI не загружает все прокси подписки: только страницу и одну выбранную запись.
+
+Подробности — в [`gui/README.md`](gui/README.md).
+
 ## API
 
 Полное описание — в [`include/milib.h`](include/milib.h).
