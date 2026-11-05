@@ -50,6 +50,11 @@ milib_delay_result milib_test_link(milib_instance* instance,
                                    const char* uri,
                                    const milib_delay_options* options);
 
+/* Parse and test a raw share link, returning metadata and a detailed error. */
+milib_link_test_result milib_test_link_info(milib_instance* instance,
+                                            const char* uri,
+                                            const milib_delay_options* options);
+
 /* SharedVPNLink. */
 milib_link_options milib_link_options_default(void);
 milib_link_result milib_link_create(milib_instance* instance,
@@ -118,6 +123,12 @@ milib_task* milib_link_ping_many_async(milib_instance* instance,
 milib_task_result milib_task_poll(milib_task* task);
 milib_error_code milib_task_cancel(milib_task* task);
 void milib_task_destroy(milib_task* task);
+
+/* Streaming HTTP. No instance is required. */
+milib_http_result milib_http_stream(const char* url,
+                                    const milib_http_options* options,
+                                    milib_http_cb cb,
+                                    void* user);
 
 /* Logging. */
 void milib_set_log_level(milib_log_level level);

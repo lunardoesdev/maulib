@@ -283,6 +283,39 @@ func milib_test_delay(instance *C.milib_instance, proxyName *C.char, options *C.
 	return out
 }
 
+//export milib_test_link_info
+func milib_test_link_info(instance *C.milib_instance, uri *C.char, options *C.milib_delay_options) (out C.milib_link_test_result) {
+	defer func() {
+		if r := recover(); r != nil {
+			setCError(&out.error, fmt.Errorf("panic: %v", r))
+		}
+	}()
+	if instance == nil || uri == nil {
+		setCError(&out.error, fmt.Errorf("invalid argument"))
+		return out
+	}
+	c, err := core.Get(uint64(C.milib_instance_get_handle(instance)))
+	if err != nil {
+		setCError(&out.error, err)
+		logError(err)
+		return out
+	}
+	result, err := c.TestLink(goString(uri), parseDelayOptions(options))
+	if err != nil {
+		setCError(&out.error, err)
+		logError(err)
+		return out
+	}
+	out.ok = true
+	out.error.code = C.MILIB_ERROR_NONE
+	copyCString(out.name[:], result.Name)
+	copyCString(out.proxy_type[:], result.Type)
+	copyCString(out.server[:], result.Server)
+	out.port = C.int(result.Port)
+	out.delay_ms = C.uint(result.Delay)
+	return out
+}
+
 //export milib_test_link
 func milib_test_link(instance *C.milib_instance, uri *C.char, options *C.milib_delay_options) (out C.milib_delay_result) {
 	defer func() {

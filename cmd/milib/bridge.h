@@ -12,6 +12,7 @@
  */
 void milib_call_task_cb(milib_task_cb cb, const milib_task_result* result, void* user);
 void milib_call_log_cb(milib_log_cb cb, milib_log_level level, const char* message, void* user);
+int milib_call_http_cb(milib_http_cb cb, const void* data, size_t len, void* user);
 
 /* Static storage for milib_version(), which must not be freed by the caller. */
 const char* milib_version_cstr(void);

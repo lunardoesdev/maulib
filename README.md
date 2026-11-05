@@ -28,12 +28,12 @@ C-ABI (`c-shared`) обёртка над ядром [mihomo](https://github.com/
 Нужен Go 1.26+ и CGO (gcc/clang). Подробности — в
 [`docs/BUILD.md`](docs/BUILD.md).
 
-```bash
-export PATH="$HOME/.local/go/bin:$PATH"
-export GOPATH="$HOME/.cache/milib/gopath"
-export GOCACHE="$HOME/.cache/milib/gocache"
+Toolchain ставится через mise:
 
+```bash
+make deps           # go, odin, android-sdk, clang, cmake
 make build          # dist/libmilib.so
+make subs           # libmilib_subs + milib-subs
 ```
 
 ## Быстрый старт (C)
@@ -192,6 +192,24 @@ milib_task_destroy(task);
 
 `milib_link_destroy` и `milib_close` отменяют и ждут связанные задачи.
 
+## Подписки
+
+Рядом с `milib` есть CMake-библиотека `libmilib_subs` и CLI `milib-subs`:
+
+- потоково качает plain/base64 подписки;
+- пишет конфиги в SQLite;
+- хранит числовой `priority` подписки;
+- тестирует конфиги и ведёт рейтинг `+1/-1` с суточными ограничениями;
+- соблюдает общий лимит запросов (по умолчанию 10 за 240 секунд).
+
+```bash
+make subs
+./build/subscriptions/milib-subs --db data/subs.db sub add URL 100 name
+./build/subscriptions/milib-subs --db data/subs.db run --limit 10 --window 240
+```
+
+Подробности — в [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
+
 ## API
 
 Полное описание — в [`include/milib.h`](include/milib.h).
@@ -226,6 +244,9 @@ make test-c-ping MILIB_TEST_VLESS='vless://...' # ping из C, реальная 
 `test-e2e-links` — главный сценарий: Python создаёт 4 прокси через FFI,
 гоняет трафик через mihomo, меняет активный прокси на горячую и одновременно
 пингует три других. Результаты — в [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md).
+
+`make test-subs` запускает C-тесты подписок (base64, SHA-256, рейтинг),
+`make test-e2e-subs` — локальный Xray + HTTP-подписка + SQLite/rating.
 
 ## Ограничения
 

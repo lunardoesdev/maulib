@@ -1,0 +1,4 @@
+# priority  url
+100 https://raw.githubusercontent.com/barry-far/V2ray-Config/main/All_Configs_base64_Sub.txt
+90 https://raw.githubusercontent.com/ALIILAPRO/v2rayNG-Config/main/server.txt
+80 https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub

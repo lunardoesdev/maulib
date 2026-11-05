@@ -117,6 +117,7 @@ func (c *Core) TestLink(link string, opts DelayOptions) (*DelayResult, error) {
 	}
 	mapping := mappings[0]
 	applyInsecureFromLink(link, mapping)
+	name, _ := mapping["name"].(string)
 	mapping["name"] = "milib-test-link"
 
 	proxy, err := adapter.ParseProxy(mapping)
@@ -137,6 +138,7 @@ func (c *Core) TestLink(link string, opts DelayOptions) (*DelayResult, error) {
 	port, _ := toInt(mapping["port"])
 	typ, _ := mapping["type"].(string)
 	return &DelayResult{
+		Name:   name,
 		Type:   typ,
 		Server: server,
 		Port:   port,

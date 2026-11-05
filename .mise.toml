@@ -1,0 +1,6 @@
+[tools]
+go = "1.27.3"
+odin = "dev-2026-11a"
+android-sdk = "23.0"
+clang = "23.1.4"
+cmake = "4.4.5"

@@ -5,23 +5,36 @@
 | Компонент | Версия |
 |---|---|
 | Linux | x86_64, glibc |
-| Go | 1.26+ |
-| CGO | gcc или clang |
+| Go | 1.27.3 (mise) |
+| CGO | clang 23.1.4 (mise) |
+| CMake | 4.4.5 (mise) |
+| SQLite | vendored amalgamation 3.54.1 |
 | Python (тесты) | 3.10+ |
 | Xray (только e2e) | 26.x |
 
 Ядро mihomo зафиксировано в `go.mod` (`v1.19.33`). Тег `main` не используется:
 в нём лежит другой проект.
 
-## Установка Go без root
+## Toolchain через mise
 
-```bash
-curl -LO https://go.dev/dl/go1.26.0.linux-amd64.tar.gz
-tar -C "$HOME/.local" -xzf go1.26.0.linux-amd64.tar.gz
-export PATH="$HOME/.local/go/bin:$PATH"
+Версии зафиксированы в `.mise.toml`:
+
+```toml
+[tools]
+go = "1.27.3"
+odin = "dev-2026-11a"
+android-sdk = "23.0"
+clang = "23.1.4"
+cmake = "4.4.5"
 ```
 
-Кэши можно держать вне домашнего каталога:
+```bash
+make deps
+# или
+mise install
+```
+
+Кэши Go можно держать вне домашнего каталога:
 
 ```bash
 export GOPATH="$HOME/.cache/milib/gopath"
@@ -38,13 +51,21 @@ make build
 Эквивалентная команда:
 
 ```bash
-CGO_ENABLED=1 go build \
+CGO_ENABLED=1 mise exec -- go build \
   -p=2 \
   -trimpath \
   -buildmode=c-shared \
   -ldflags "-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33" \
   -o dist/libmilib.so \
   ./cmd/milib
+```
+
+C-библиотека подписок:
+
+```bash
+make subs
+# build/subscriptions/libmilib_subs.so
+# build/subscriptions/milib-subs
 ```
 
 Результат:
@@ -87,6 +108,8 @@ make test-e2e        # одиночный VLESS + mixed inbound
 make test-e2e-links  # 4 прокси, hot-swap, конкурентные пинги
 make test-c-ping-local                 # ping из C через локальный Xray
 make test-c-ping MILIB_TEST_VLESS='vless://...'  # ping из C через реальную ссылку
+make test-subs       # C-тесты подписок (base64, SHA-256, rating)
+make test-e2e-subs   # локальный Xray + HTTP-подписка + SQLite/rating
 ```
 
 ## Особенности

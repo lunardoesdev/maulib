@@ -1,7 +1,8 @@
 # milib — build and test
 
-GO      ?= $(HOME)/.local/go/bin/go
-CC      ?= cc
+MISE    ?= mise
+GO      := $(MISE) exec -- go
+CC      := $(MISE) exec -- clang
 PYTHON  ?= python3
 
 export GOPATH  ?= $(HOME)/.cache/milib/gopath
@@ -10,16 +11,19 @@ export CGO_ENABLED = 1
 
 LDFLAGS = -s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33
 
-.PHONY: all build test test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
+.PHONY: all deps build subs test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
 
 all: build
+
+deps:
+	$(MISE) install
 
 build:
 	mkdir -p dist
 	$(GO) build -p=2 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o dist/libmilib.so ./cmd/milib
 	@ls -lh dist/libmilib.so
 
-test: test-unit test-links test-c test-e2e test-e2e-links
+test: test-unit test-links test-c test-subs test-e2e test-e2e-subs test-e2e-links
 
 test-unit: build
 	$(GO) test ./internal/...
@@ -27,6 +31,16 @@ test-unit: build
 
 test-links: build
 	$(PYTHON) tests/python/test_links.py
+
+subs: build
+	$(MISE) exec -- cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang
+	$(MISE) exec -- cmake --build build -j$(shell nproc)
+
+test-subs: subs
+	$(MISE) exec -- ctest --test-dir build --output-on-failure
+
+test-e2e-subs: subs
+	$(PYTHON) tests/e2e/run_subs.py
 
 test-stress: build
 	$(PYTHON) tests/python/test_stress.py
@@ -64,4 +78,4 @@ xray:
 	chmod +x /tmp/opencode/xray/xray
 
 clean:
-	rm -rf dist
+	rm -rf dist build

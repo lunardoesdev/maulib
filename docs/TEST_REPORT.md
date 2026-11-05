@@ -10,8 +10,9 @@
 | ОС | Fedora Linux 45 (Workstation) |
 | Ядро | 7.2.11-300.fc45.x86_64 |
 | libc | glibc 2.44 |
-| Компилятор | gcc 16.2.1 |
-| Go | 1.26.0 linux/amd64 |
+| Компилятор | clang 23.1.4 (mise), gcc 16.2.1 |
+| Go | 1.27.3 linux/amd64 (mise) |
+| CMake | 4.4.5 (mise) |
 | Python | 3.15.0 |
 | Xray (e2e) | 26.10.31 |
 
@@ -186,3 +187,55 @@ PASS  surviving links still work
 - `milib_close` и `milib_link_destroy` нельзя вызывать из async callback;
 - Xray 26.x блокирует loopback/private цели из VLESS-inbound по умолчанию;
   в тестовом конфиге добавлено `finalRules: allow 127.0.0.0/8`.
+
+## 8. Подписки (`libmilib_subs`)
+
+Сборка:
+
+```bash
+make subs
+make test-subs
+```
+
+CTest:
+
+```
+1/3 Test #1: base64 ........................... Passed
+2/3 Test #2: sha256 ........................... Passed
+3/3 Test #3: rating ........................... Passed
+
+100% tests passed out of 3
+```
+
+Проверено вручную:
+
+- plain-подписка с `#profile-title`, `#profile-update-interval`,
+  `#subscription-userinfo`;
+- base64-подписка, в том числе с переносами и без padding;
+- реальные GitHub-подписки:
+  - `barry-far/.../All_Configs_base64_Sub.txt` — 9167 конфигов,
+    ~2.7 с, RSS ~48 MB;
+  - `ALIILAPRO/.../server.txt` — 4323 конфига;
+  - `Pawdroid/Free-servers/main/sub` — 9 конфигов;
+- повторный fetch с `ETag` возвращает `304` и не меняет БД;
+- смена содержимого подписки удаляет устаревшие конфиги (`removed=2`);
+- тест живого прокси через локальный Xray: `alive=1`, `rating 0->1`,
+  метаданные имя/сервер/порт обновились;
+- тест мёртвого прокси: `rating 0->-1`, повторный тест в тот же день `+0`;
+- в `test_events` пишутся все результаты;
+- `libmilib_subs` экспортирует только `milib_subs_*` символы.
+
+E2E:
+
+```bash
+make test-e2e-subs
+```
+
+```
+14 passed, 0 failed
+```
+
+Проверено: plain/base64 ingest, 4 конфига в SQLite, живой прокси через
+локальный Xray (`alive=1`, `rating 0->1`, метаданные), мёртвый прокси
+(`rating 0->-1`, повторный тест в тот же день не меняет рейтинг),
+`test_events`.

@@ -335,6 +335,9 @@ CGO_ENABLED=1 go build \
 - [x] **7. Документация** — Makefile, README, `TEST_REPORT.md`, LICENSE.
 - [x] **8. SharedVPNLink** — объект-ссылка, per-link SOCKS5 с авторизацией,
   ping/speed/exit_ip, конкурентные задачи, hot-swap; e2e на 4 прокси.
+- [x] **9. Подписки** — CMake/C-библиотека `libmilib_subs`: потоковый
+  plain/base64 ingest, SQLite, priority, рейтинг +1/-1 с суточными лимитами,
+  общий rate limit, CLI `milib-subs`.
 
 Оценка: MVP — ~1 рабочий день, полный вариант — 1.5–2 дня.
 
@@ -353,3 +356,5 @@ CGO_ENABLED=1 go build \
    base image.
 8. **Память при сборке**: mihomo большой; `-p=2`, при OOM — swap или другая
    машина.
+9. **Публичные подписки**: конфиги недоверенные; тестер запускать отдельным
+   процессом, не встраивать в долгоживущий сервис без sandbox.

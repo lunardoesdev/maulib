@@ -14,6 +14,13 @@ void milib_call_log_cb(milib_log_cb cb, milib_log_level level, const char* messa
     cb(level, message, user);
 }
 
+int milib_call_http_cb(milib_http_cb cb, const void* data, size_t len, void* user) {
+    if (cb == NULL) {
+        return 0;
+    }
+    return cb(data, len, user);
+}
+
 const char* milib_version_cstr(void) {
     return "0.2.0";
 }

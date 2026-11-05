@@ -209,6 +209,40 @@ typedef struct milib_ping_many_result {
     size_t count;
 } milib_ping_many_result;
 
+/* Detailed result of parsing and testing a raw share link. */
+typedef struct milib_link_test_result {
+    bool ok;
+    milib_error error;
+    char name[MILIB_NAME_MAX];
+    char proxy_type[MILIB_TYPE_MAX];
+    char server[MILIB_HOST_MAX];
+    int port;
+    unsigned delay_ms;
+} milib_link_test_result;
+
+/* Streaming HTTP. */
+typedef int (*milib_http_cb)(const void* data, size_t len, void* user);
+
+typedef struct milib_http_options {
+    int timeout_ms;
+    const char* user_agent;
+    const char* etag;
+    const char* last_modified;
+    int max_redirects;
+} milib_http_options;
+
+typedef struct milib_http_result {
+    bool ok;
+    milib_error error;
+    int status;
+    char etag[256];
+    char last_modified[256];
+    char subscription_userinfo[512];
+    char profile_title[256];
+    char profile_update_interval[32];
+    unsigned long long bytes;
+} milib_http_result;
+
 /* Async tasks. */
 typedef enum milib_task_kind {
     MILIB_TASK_NONE = 0,
