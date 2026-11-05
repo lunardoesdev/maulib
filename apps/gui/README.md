@@ -9,11 +9,19 @@ make gui
 ./build/mewnet-gui --db data/subs.db
 ```
 
+Для проверки без ручного скриншота:
+
+```bash
+./build/mewnet-gui --db data/subs.db --screenshot /tmp/mewnet-gui.png
+```
+
 GUI использует:
 
 - `libmewnet_subs` для всех операций с SQLite;
 - `vendor:raylib` из Odin;
-- только страницы прокси, а не всю подписку.
+- только страницы прокси, а не всю подписку;
+- DejaVu Sans + Symbola fallback для Unicode/эмодзи.
+  CJK-иероглифы, которых нет в этих шрифтах, могут отображаться как `?`.
 
 ## Что можно делать
 

@@ -4,6 +4,7 @@ import "core:c"
 import "core:fmt"
 import "core:os"
 import "core:strconv"
+import "core:unicode/utf8"
 import rl "vendor:raylib"
 
 PAGE_SIZE :: 16
@@ -11,15 +12,124 @@ WINDOW_W :: 1400
 WINDOW_H :: 900
 
 g_font: rl.Font
-g_codepoints: [512]rune
+g_symbol_font: rl.Font
+g_has_symbol_font: bool
+
+glyph_exists :: proc(font: rl.Font, r: rune) -> bool {
+	if font.glyphs == nil || font.glyphCount <= 0 {
+		return false
+	}
+	index := int(rl.GetGlyphIndex(font, r))
+	if index < 0 || index >= int(font.glyphCount) {
+		return false
+	}
+	return font.glyphs[index].value == r
+}
+
+font_index_for :: proc(r: rune) -> int {
+	if glyph_exists(g_font, r) {
+		return 0
+	}
+	if g_has_symbol_font && glyph_exists(g_symbol_font, r) {
+		return 1
+	}
+	return 0
+}
+
+font_at :: proc(index: int) -> rl.Font {
+	if index == 1 && g_has_symbol_font {
+		return g_symbol_font
+	}
+	return g_font
+}
 
 draw_text :: proc(text: cstring, x, y, size: c.int, color: rl.Color) {
-	rl.DrawTextEx(g_font, text, rl.Vector2{f32(x), f32(y)}, f32(size), 0, color)
+	s := string(text)
+	position := f32(x)
+	segment: [512]u8
+	segment_len := 0
+	current_font := -1
+
+	flush := proc(segment: ^[512]u8, segment_len: ^int, font_index: int, position: ^f32,
+		y: c.int, size: c.int, color: rl.Color) {
+		if segment_len^ == 0 {
+			return
+		}
+		segment[segment_len^] = 0
+		font := font_at(font_index)
+		value := rl.MeasureTextEx(font, cstring(&segment[0]), f32(size), 0)
+		rl.DrawTextEx(font, cstring(&segment[0]), rl.Vector2{position^, f32(y)}, f32(size), 0, color)
+		position^ += value.x
+		segment_len^ = 0
+	}
+
+	for i := 0; i < len(s); {
+		r, n := utf8.decode_rune(s[i:])
+		if n <= 0 {
+			r = '?'
+			n = 1
+		}
+		font_index := font_index_for(r)
+		if font_index != current_font && segment_len > 0 {
+			flush(&segment, &segment_len, current_font, &position, y, size, color)
+		}
+		current_font = font_index
+		if segment_len + n >= len(segment) {
+			flush(&segment, &segment_len, current_font, &position, y, size, color)
+		}
+		for j := 0; j < n; j += 1 {
+			segment[segment_len] = s[i + j]
+			segment_len += 1
+		}
+		i += n
+	}
+	if segment_len > 0 {
+		flush(&segment, &segment_len, current_font, &position, y, size, color)
+	}
 }
 
 measure_text :: proc(text: cstring, size: c.int) -> c.int {
-	value := rl.MeasureTextEx(g_font, text, f32(size), 0)
-	return c.int(value.x)
+	s := string(text)
+	width := f32(0)
+	segment: [512]u8
+	segment_len := 0
+	current_font := -1
+
+	flush := proc(segment: ^[512]u8, segment_len: ^int, font_index: int, width: ^f32,
+		size: c.int) {
+		if segment_len^ == 0 {
+			return
+		}
+		segment[segment_len^] = 0
+		value := rl.MeasureTextEx(font_at(font_index), cstring(&segment[0]), f32(size), 0)
+		width^ += value.x
+		segment_len^ = 0
+	}
+
+	for i := 0; i < len(s); {
+		r, n := utf8.decode_rune(s[i:])
+		if n <= 0 {
+			r = '?'
+			n = 1
+		}
+		font_index := font_index_for(r)
+		if font_index != current_font && segment_len > 0 {
+			flush(&segment, &segment_len, current_font, &width, size)
+		}
+		current_font = font_index
+		if segment_len + n >= len(segment) {
+			flush(&segment, &segment_len, current_font, &width, size)
+		}
+		for j := 0; j < n; j += 1 {
+			segment[segment_len] = s[i + j]
+			segment_len += 1
+		}
+		i += n
+	}
+	if segment_len > 0 {
+		flush(&segment, &segment_len, current_font, &width, size)
+	}
+	return c.int(width)
 }
 
 Input_Field :: enum {
@@ -362,8 +472,22 @@ draw_wrapped :: proc(text: string, x, y, width: c.int, size: c.int, color: rl.Co
 
 main :: proc() {
 	db_path := "data/subs.db"
-	if len(os.args) >= 3 && os.args[1] == "--db" {
-		db_path = os.args[2]
+	screenshot_path := ""
+	use_default_font := false
+	argi := 1
+	for argi < len(os.args) {
+		if os.args[argi] == "--db" && argi + 1 < len(os.args) {
+			db_path = os.args[argi + 1]
+			argi += 2
+		} else if os.args[argi] == "--screenshot" && argi + 1 < len(os.args) {
+			screenshot_path = os.args[argi + 1]
+			argi += 2
+		} else if os.args[argi] == "--default-font" {
+			use_default_font = true
+			argi += 1
+		} else {
+			argi += 1
+		}
 	}
 
 	config := mewnet_subs_config_default()
@@ -397,21 +521,68 @@ main :: proc() {
 	rl.SetTargetFPS(60)
 
 	g_font = rl.GetFontDefault()
+	font_loaded := false
+	symbol_loaded := false
 	font_path := "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf"
-	if os.exists(font_path) {
-		index := 0
-		for r in 32 ..= 126 {
-			g_codepoints[index] = rune(r)
-			index += 1
+	if !use_default_font && os.exists(font_path) {
+		codepoints := make([dynamic]rune, 0, 2048)
+		defer delete(codepoints)
+		ranges := [][2]rune{
+			{32, 126},
+			{0xA0, 0x24F},
+			{0x300, 0x36F},
+			{0x370, 0x3FF},
+			{0x400, 0x52F},
+			{0x590, 0x5FF},
+			{0x600, 0x6FF},
+			{0x750, 0x77F},
 		}
-		for r in 0x400 ..= 0x4FF {
-			g_codepoints[index] = rune(r)
-			index += 1
+		for rng in ranges {
+			for r in rng[0] ..= rng[1] {
+				append(&codepoints, r)
+			}
 		}
-		loaded := rl.LoadFontEx(cstring(raw_data(font_path)), 28, &g_codepoints[0], c.int(index))
+		loaded := rl.LoadFontEx(cstring(raw_data(font_path)), 28,
+			raw_data(codepoints), c.int(len(codepoints)))
 		if loaded.texture.id != 0 {
 			g_font = loaded
-			defer rl.UnloadFont(g_font)
+			font_loaded = true
+		}
+	}
+
+	symbol_path := "/usr/share/fonts/gdouros-symbola/Symbola.ttf"
+	if !use_default_font && os.exists(symbol_path) {
+		codepoints := make([dynamic]rune, 0, 8192)
+		defer delete(codepoints)
+		ranges := [][2]rune{
+			{0x2000, 0x2BFF},
+			{0x1F000, 0x1FAFF},
+			{0x1F1E6, 0x1F1FF},
+			{0x2600, 0x27BF},
+			{0x1F300, 0x1F5FF},
+			{0x1F600, 0x1F64F},
+			{0x1F680, 0x1F6FF},
+			{0x1F900, 0x1F9FF},
+		}
+		for rng in ranges {
+			for r in rng[0] ..= rng[1] {
+				append(&codepoints, r)
+			}
+		}
+		loaded := rl.LoadFontEx(cstring(raw_data(symbol_path)), 28,
+			raw_data(codepoints), c.int(len(codepoints)))
+		if loaded.texture.id != 0 {
+			g_symbol_font = loaded
+			g_has_symbol_font = true
+			symbol_loaded = true
+		}
+	}
+	defer {
+		if font_loaded {
+			rl.UnloadFont(g_font)
+		}
+		if symbol_loaded {
+			rl.UnloadFont(g_symbol_font)
 		}
 	}
 
@@ -428,6 +599,7 @@ main :: proc() {
 	proxy_add_rect := rl.Rectangle{x = 1122, y = 780, width = 120, height = 38}
 	proxy_del_rect := rl.Rectangle{x = 1254, y = 780, width = 134, height = 38}
 
+	screenshot_frames := 0
 	for !rl.WindowShouldClose() {
 		mouse := rl.GetMousePosition()
 
@@ -657,5 +829,12 @@ main :: proc() {
 		draw_text(status_text, 12, WINDOW_H - 27, 18, rl.DARKGRAY)
 
 		rl.EndDrawing()
+		if len(screenshot_path) > 0 {
+			screenshot_frames += 1
+			if screenshot_frames >= 2 {
+				rl.TakeScreenshot(cstring(raw_data(screenshot_path)))
+				break
+			}
+		}
 	}
 }
