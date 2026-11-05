@@ -152,6 +152,44 @@ func milib_link_ping(link *C.milib_link, optionsJSON *C.char) (out *C.char) {
 	return jsonOK(result)
 }
 
+// milib_link_ping_ms measures latency and writes it as an integer number of
+// milliseconds to *out_delay_ms.
+//
+// Returns 0 on success, -1 on error (see out_error).
+//
+//export milib_link_ping_ms
+func milib_link_ping_ms(link *C.milib_link, optionsJSON *C.char, outDelay *C.int, outError **C.char) (ret C.int) {
+	defer func() {
+		if r := recover(); r != nil {
+			setCError(outError, fmt.Errorf("panic: %v", r))
+			ret = -1
+		}
+	}()
+
+	c, id, err := resolveLink(link)
+	if err != nil {
+		setCError(outError, err)
+		return -1
+	}
+	opts, err := parseDelayOptions(optionsJSON)
+	if err != nil {
+		setCError(outError, err)
+		return -1
+	}
+	delay, err := c.LinkPingMS(id, opts)
+	if err != nil {
+		setCError(outError, err)
+		return -1
+	}
+	if outDelay != nil {
+		*outDelay = C.int(delay)
+	}
+	if outError != nil {
+		*outError = nil
+	}
+	return 0
+}
+
 // milib_link_speed downloads data through the proxy and reports throughput.
 //
 //export milib_link_speed

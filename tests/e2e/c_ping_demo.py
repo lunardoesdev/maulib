@@ -30,9 +30,9 @@ def main():
 
     xray = start_xray(workdir, 0)
     try:
-        print(f"local Xray VLESS: {xray['link']}")
-        print(f"target URL:       {url}")
-        print()
+        print(f"local Xray VLESS: {xray['link']}", file=sys.stderr)
+        print(f"target URL:       {url}", file=sys.stderr)
+        print("ping (ms):", file=sys.stderr)
         proc = subprocess.run([binary, xray["link"], url])
         return proc.returncode
     finally:

@@ -406,6 +406,27 @@ func (c *Core) linkPingContext(ctx context.Context, id uint64, opts DelayOptions
 	}, nil
 }
 
+// LinkPingMS is the numeric form of LinkPing: it returns the delay in
+// milliseconds and nothing else.
+func (c *Core) LinkPingMS(id uint64, opts DelayOptions) (int, error) {
+	result, err := c.LinkPing(id, opts)
+	if err != nil {
+		return 0, err
+	}
+	switch value := result["delay"].(type) {
+	case uint16:
+		return int(value), nil
+	case int:
+		return value, nil
+	case int64:
+		return int(value), nil
+	case float64:
+		return int(value), nil
+	default:
+		return 0, errors.New("delay value is missing")
+	}
+}
+
 // LinkSpeed downloads data through the link's proxy and reports throughput.
 func (c *Core) LinkSpeed(id uint64, opts SpeedOptions) (map[string]any, error) {
 	return c.linkSpeedContext(context.Background(), id, opts)

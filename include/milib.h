@@ -106,6 +106,17 @@ char* milib_link_list(milib_handle h);
 char* milib_link_ping(milib_link* link, const char* options_json);
 
 /*
+ * Numeric ping: the delay in milliseconds is written to *out_delay_ms.
+ *
+ * Returns 0 on success, -1 on error. On error *out_error receives an allocated
+ * message (free with milib_free_string).
+ */
+int milib_link_ping_ms(milib_link* link,
+                       const char* options_json,
+                       int* out_delay_ms,
+                       char** out_error);
+
+/*
  * Speed: download bytes through the proxy.
  * options_json: {"url":"https://...","bytes":5242880,"timeout_ms":15000}
  */

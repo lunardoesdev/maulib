@@ -47,6 +47,10 @@ make build          # dist/libmilib.so
 milib_link* link = milib_link_create(h, "vless://...", NULL, &err);
 char* info = milib_link_info(link);   // socks.addr, socks.username, socks.password
 char* ping = milib_link_ping(link, "{\"url\":\"https://www.gstatic.com/generate_204\"}");
+
+int delay_ms = 0;                              /* пинг числом */
+milib_link_ping_ms(link, NULL, &delay_ms, NULL);
+
 char* speed = milib_link_speed(link, "{\"url\":\"https://speed.cloudflare.com/__down?bytes=5242880\"}");
 char* ip = milib_link_exit_ip(link, NULL);
 milib_link_destroy(link);
@@ -56,7 +60,8 @@ milib_link_destroy(link);
 
 | Метод | Что делает |
 |---|---|
-| `milib_link_ping` | HTTP-задержка **трафиком через прокси** (`URLTest`) |
+| `milib_link_ping` | HTTP-задержка **трафиком через прокси** (`URLTest`), JSON |
+| `milib_link_ping_ms` | то же, но задержка числом в `int*` |
 | `milib_link_speed` | скачивает N байт через прокси, возвращает Мбит/с |
 | `milib_link_exit_ip` | GET к echo-сервису через прокси, возвращает exit IP |
 | `milib_link_*_async` | то же в фоновой задаче + C-callback |

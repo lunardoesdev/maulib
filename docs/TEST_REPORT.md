@@ -91,9 +91,10 @@ all C tests passed
 
 ```
 $ make test-c-ping-local
-ping: {"delay":3,"link_id":1,"mode":"proxy","name":"xray-1",
-       "ok":true,"url":"http://127.0.0.1:38035/204"}
+3
 ```
+
+`3` — задержка в миллисекундах, полученная через `milib_link_ping_ms`.
 
 ## 4. Stress: 100 циклов add/remove
 

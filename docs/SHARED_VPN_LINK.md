@@ -189,25 +189,32 @@ cc tests/c/test_ping.c -Iinclude -Ldist -lmilib \
 MILIB_TEST_VLESS='vless://...' ./dist/test_ping
 ```
 
-Минимальный код:
+Пинг числом, без разбора JSON:
 
 ```c
 milib_handle h = 0;
 char* err = NULL;
-milib_init(NULL, NULL, "{\"mixed_port\":-1}", &h, &err);
+milib_init(NULL, NULL, "{\"mixed_port\":-1,\"log_level\":\"silent\"}", &h, &err);
 
 milib_link* link = milib_link_create(h, vless_link, NULL, &err);
-char* result = milib_link_ping(link,
-    "{\"url\":\"https://www.gstatic.com/generate_204\","
-    "\"timeout_ms\":5000,\"expected\":\"204\"}");
 
-puts(result);                 // {"ok":true,"delay":123,...}
-int ok = strstr(result, "\"ok\":true") != NULL;
+int delay_ms = 0;
+if (milib_link_ping_ms(link,
+        "{\"url\":\"https://www.gstatic.com/generate_204\","
+        "\"timeout_ms\":5000,\"expected\":\"204\"}",
+        &delay_ms, &err) != 0) {
+    fprintf(stderr, "ping failed: %s\n", err);
+    milib_free_string(err);
+} else {
+    printf("%d\n", delay_ms);   // например: 42
+}
 
-milib_free_string(result);
 milib_link_destroy(link);
 milib_shutdown(h);
 ```
+
+`milib_link_ping_ms` возвращает `0` при успехе и `-1` при ошибке; задержка
+пишется в `*out_delay_ms`. JSON-вариант `milib_link_ping` остаётся доступен.
 
 `mixed_port: -1` отключает inbound: для ping он не нужен.
 
@@ -220,9 +227,13 @@ make test-c-ping-local
 Пример вывода:
 
 ```
-link: {"ok":true,"link_id":1,"name":"xray-1","type":"VLESS",...}
-ping: {"ok":true,"link_id":1,"name":"xray-1","delay":3,
-       "url":"http://127.0.0.1:38035/204","mode":"proxy"}
+3
+```
+
+Это и есть задержка в миллисекундах. Для JSON-вывода:
+
+```bash
+./dist/test_ping --json 'vless://...' 'http://127.0.0.1:8080/204'
 ```
 
 `delay` — это время HTTP-запроса, реально прошедшего через VLESS-прокси,

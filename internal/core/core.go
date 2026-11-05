@@ -102,6 +102,14 @@ func Init(homeDir, configYAML string, opts InitOptions) (*Core, uint64, error) {
 
 	C.SetHomeDir(homeAbs)
 
+	// Apply the requested log level before config.Parse(), which logs
+	// startup messages before hub.ApplyConfig can set the level.
+	if opts.LogLevel != "" {
+		if level, ok := log.LogLevelMapping[strings.ToLower(opts.LogLevel)]; ok {
+			log.SetLevel(level)
+		}
+	}
+
 	prep, err := prepareConfig(configYAML, opts)
 	if err != nil {
 		return nil, 0, err

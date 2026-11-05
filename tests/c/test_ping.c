@@ -1,14 +1,16 @@
 /*
- * Ping a proxy through the C ABI.
+ * Ping a proxy through the C ABI and print the delay as a number.
  *
  * Usage:
  *   ./test_ping 'vless://...' [url]
+ *   ./test_ping --json 'vless://...' [url]
  *
  * or:
- *   MILIB_TEST_VLESS='vless://...' MILIB_PING_URL='http://127.0.0.1:8080/204' ./test_ping
+ *   MILIB_TEST_VLESS='vless://...' ./test_ping
  *
- * Exit code 0 means the ping succeeded (delay > 0). The ping is an HTTP
- * request sent through the proxy, not an ICMP ping to the proxy server.
+ * Default output is a single integer: delay in milliseconds. Exit code 0 means
+ * the ping succeeded. The ping is an HTTP request sent through the proxy, not
+ * an ICMP ping to the proxy server.
  */
 
 #include <stdio.h>
@@ -18,15 +20,23 @@
 #include "milib.h"
 
 int main(int argc, char **argv) {
-    const char *link = argc > 1 ? argv[1] : getenv("MILIB_TEST_VLESS");
-    const char *url = argc > 2 ? argv[2] : getenv("MILIB_PING_URL");
+    int json_mode = 0;
+    int argi = 1;
+
+    if (argi < argc && strcmp(argv[argi], "--json") == 0) {
+        json_mode = 1;
+        argi++;
+    }
+
+    const char *link = argi < argc ? argv[argi++] : getenv("MILIB_TEST_VLESS");
+    const char *url = argi < argc ? argv[argi] : getenv("MILIB_PING_URL");
 
     if (url == NULL || url[0] == '\0') {
         url = "https://www.gstatic.com/generate_204";
     }
     if (link == NULL || link[0] == '\0') {
         fprintf(stderr,
-                "usage: %s 'vless://...' [url]\n"
+                "usage: %s [--json] 'vless://...' [url]\n"
                 "   or: MILIB_TEST_VLESS='vless://...' %s\n",
                 argv[0], argv[0]);
         return 2;
@@ -36,7 +46,7 @@ int main(int argc, char **argv) {
     char *error = NULL;
 
     /* mixed_port: -1 disables the inbound; ping does not need it. */
-    if (milib_init(NULL, NULL, "{\"mixed_port\":-1,\"log_level\":\"error\"}",
+    if (milib_init(NULL, NULL, "{\"mixed_port\":-1,\"log_level\":\"silent\"}",
                    &handle, &error) != 0) {
         fprintf(stderr, "init failed: %s\n", error ? error : "unknown");
         milib_free_string(error);
@@ -51,21 +61,31 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    char *info = milib_link_info(vpn);
-    printf("link: %s\n", info ? info : "(null)");
-    milib_free_string(info);
-
     char options[1024];
     snprintf(options, sizeof(options),
              "{\"url\":\"%s\",\"timeout_ms\":5000,\"expected\":\"204\"}", url);
 
-    char *result = milib_link_ping(vpn, options);
-    printf("ping: %s\n", result ? result : "(null)");
+    if (json_mode) {
+        char *info = milib_link_info(vpn);
+        printf("link: %s\n", info ? info : "(null)");
+        milib_free_string(info);
 
-    int ok = result != NULL && strstr(result, "\"ok\":true") != NULL;
+        char *result = milib_link_ping(vpn, options);
+        printf("ping: %s\n", result ? result : "(null)");
+        milib_free_string(result);
+    } else {
+        int delay_ms = 0;
+        if (milib_link_ping_ms(vpn, options, &delay_ms, &error) != 0) {
+            fprintf(stderr, "ping failed: %s\n", error ? error : "unknown");
+            milib_free_string(error);
+            milib_link_destroy(vpn);
+            milib_shutdown(handle);
+            return 1;
+        }
+        printf("%d\n", delay_ms);
+    }
 
-    milib_free_string(result);
     milib_link_destroy(vpn);
     milib_shutdown(handle);
-    return ok ? 0 : 1;
+    return 0;
 }
