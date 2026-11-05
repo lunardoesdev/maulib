@@ -25,13 +25,13 @@ import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-LIB_PATH = os.environ.get("MILIB_LIB", os.path.join(ROOT, "dist", "libmilib.so"))
+LIB_PATH = os.environ.get("MEWNET_LIB", os.path.join(ROOT, "dist", "libmewnet.so"))
 XRAY_BIN = os.environ.get("XRAY_BIN", "/tmp/opencode/xray/xray")
 
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tests", "python"))
 import target_204  # noqa: E402
-from test_api import Milib  # noqa: E402
+from test_api import Mewnet  # noqa: E402
 
 PASSED = []
 FAILED = []
@@ -83,7 +83,7 @@ def curl_through(mixed_port, url, timeout=10):
     return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
 
 
-class Lib(Milib):
+class Lib(Mewnet):
     def init(self, home):
         return super().init(
             home=home, options={"mixed_port": 0, "log_level": "warning"}
@@ -108,7 +108,7 @@ def main():
         print(f"SKIP: {LIB_PATH} not built")
         return 2
 
-    workdir = tempfile.mkdtemp(prefix="milib-e2e-")
+    workdir = tempfile.mkdtemp(prefix="mewnet-e2e-")
     access_log = os.path.join(workdir, "access.log")
     error_log = os.path.join(workdir, "error.log")
     home = os.path.join(workdir, "home")
@@ -261,7 +261,7 @@ def main():
         api.remove(name)
 
         # optional real link
-        real = os.environ.get("MILIB_TEST_VLESS")
+        real = os.environ.get("MEWNET_TEST_VLESS")
         if real:
             added = api.add(real)
             check("add real VLESS link", bool(added and added.get("ok")), str(added))

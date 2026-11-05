@@ -14,7 +14,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from test_api import DEAD_VLESS, LIB_PATH, Milib  # noqa: E402
+from test_api import DEAD_VLESS, LIB_PATH, Mewnet  # noqa: E402
 
 
 def recv_exact(sock, size):
@@ -47,7 +47,7 @@ class LinkTest(unittest.TestCase):
     def setUpClass(cls):
         if not os.path.exists(LIB_PATH):
             raise unittest.SkipTest(f"{LIB_PATH} not built")
-        cls.api = Milib()
+        cls.api = Mewnet()
         cls.api.init(options={"mixed_port": 0, "log_level": "error"})
 
     @classmethod
@@ -66,7 +66,7 @@ class LinkTest(unittest.TestCase):
         self.assertGreater(info["link_id"], 0)
         self.assertEqual(info["name"], "dead-node")
         self.assertEqual(info["type"], "VLESS")
-        self.assertEqual(info["socks"]["username"], "milib")
+        self.assertEqual(info["socks"]["username"], "mewnet")
         self.assertGreaterEqual(len(info["socks"]["password"]), 16)
         self.assertTrue(info["socks"]["addr"].startswith("127.0.0.1:"))
 

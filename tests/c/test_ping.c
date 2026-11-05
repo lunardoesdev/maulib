@@ -6,7 +6,7 @@
  *   ./test_ping --verbose 'vless://...' [url]
  *
  * or:
- *   MILIB_TEST_VLESS='vless://...' ./test_ping
+ *   MEWNET_TEST_VLESS='vless://...' ./test_ping
  *
  * Default output is a single integer: delay in milliseconds. Exit code 0 means
  * the ping succeeded. The ping is an HTTP request sent through the proxy, not
@@ -17,12 +17,12 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "milib.h"
+#include "mewnet.h"
 
-static void on_log(milib_log_level level, const char *message, void *user) {
+static void on_log(mewnet_log_level level, const char *message, void *user) {
     (void)user;
-    if (level >= MILIB_LOG_WARNING) {
-        fprintf(stderr, "milib: %s\n", message);
+    if (level >= MEWNET_LOG_WARNING) {
+        fprintf(stderr, "mewnet: %s\n", message);
     }
 }
 
@@ -36,8 +36,8 @@ int main(int argc, char **argv) {
         argi++;
     }
 
-    const char *link = argi < argc ? argv[argi++] : getenv("MILIB_TEST_VLESS");
-    const char *url = argi < argc ? argv[argi] : getenv("MILIB_PING_URL");
+    const char *link = argi < argc ? argv[argi++] : getenv("MEWNET_TEST_VLESS");
+    const char *url = argi < argc ? argv[argi] : getenv("MEWNET_PING_URL");
 
     if (url == NULL || url[0] == '\0') {
         url = "https://www.gstatic.com/generate_204";
@@ -45,41 +45,41 @@ int main(int argc, char **argv) {
     if (link == NULL || link[0] == '\0') {
         fprintf(stderr,
                 "usage: %s [--verbose] 'vless://...' [url]\n"
-                "   or: MILIB_TEST_VLESS='vless://...' %s\n",
+                "   or: MEWNET_TEST_VLESS='vless://...' %s\n",
                 argv[0], argv[0]);
         return 2;
     }
 
-    milib_config config = milib_config_default();
+    mewnet_config config = mewnet_config_default();
     config.mixed_port = -1;
     config.log_level = "error";
 
-    milib_init_result init = milib_init(&config);
+    mewnet_init_result init = mewnet_init(&config);
     if (init.instance == NULL) {
         fprintf(stderr, "init failed: %s\n", init.error.message);
         return 1;
     }
-    milib_instance *instance = init.instance;
-    milib_set_log_callback(on_log, NULL);
+    mewnet_instance *instance = init.instance;
+    mewnet_set_log_callback(on_log, NULL);
 
-    milib_link_options link_options = milib_link_options_default();
+    mewnet_link_options link_options = mewnet_link_options_default();
     link_options.local_proxy = false;
 
-    milib_link_result created = milib_link_create(instance, link, &link_options);
+    mewnet_link_result created = mewnet_link_create(instance, link, &link_options);
     if (created.link == NULL) {
         fprintf(stderr, "link_create failed: %s\n", created.error.message);
-        milib_close(instance);
+        mewnet_close(instance);
         return 1;
     }
-    milib_link *vpn = created.link;
+    mewnet_link *vpn = created.link;
 
-    milib_delay_options delay_options = milib_delay_options_default();
+    mewnet_delay_options delay_options = mewnet_delay_options_default();
     delay_options.url = url;
     delay_options.timeout_ms = 5000;
     delay_options.expected = "204";
 
     if (verbose) {
-        milib_link_info info = milib_link_get_info(vpn);
+        mewnet_link_info info = mewnet_link_get_info(vpn);
         if (info.ok) {
             printf("link: id=%llu name=%s type=%s server=%s port=%d\n",
                    (unsigned long long)info.id, info.name, info.proxy_type,
@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    milib_ping_result result = milib_link_ping(vpn, &delay_options);
+    mewnet_ping_result result = mewnet_link_ping(vpn, &delay_options);
     int exit_code = 0;
     if (!result.ok) {
         fprintf(stderr, "ping failed: code %d\n", result.error);
@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
         printf("%u\n", result.delay_ms);
     }
 
-    milib_link_destroy(vpn);
-    milib_close(instance);
+    mewnet_link_destroy(vpn);
+    mewnet_close(instance);
     return exit_code;
 }

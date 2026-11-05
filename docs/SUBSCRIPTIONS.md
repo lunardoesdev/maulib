@@ -1,48 +1,48 @@
-# Подписки: `libmilib_subs`
+# Подписки: `libmewnet_subs`
 
-`libmilib_subs` — C-библиотека для работы с подписками:
+`libmewnet_subs` — C-библиотека для работы с подписками:
 
 - качает подписку потоково, не загружая тело целиком в память;
 - поддерживает plain text и base64 (стандартный и URL-safe);
 - парсит `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, ...
 - пишет конфиги, рейтинг и историю тестов в SQLite;
 - удаляет устаревшие конфиги через generation-механизм;
-- проверяет конфиги через `milib_test_link_info`;
+- проверяет конфиги через `mewnet_test_link_info`;
 - соблюдает общий лимит запросов.
 
 ## Сборка
 
 ```bash
 make deps          # mise install: go, odin, android-sdk, clang, cmake
-make build         # dist/libmilib.so
-make subs          # build/subscriptions/libmilib_subs.so + milib-subs
+make build         # dist/libmewnet.so
+make subs          # build/libs/mewnet-subs/libmewnet_subs.so + mewnet-subs
 make test-subs     # ctest
 ```
 
 CMake использует:
 
-- `milib` из `dist/libmilib.so`;
+- `mewnet` из `dist/libmewnet.so`;
 - `third_party/sqlite3` (amalgamation, public domain);
 - clang из mise.
 
 ## CLI
 
 ```bash
-./build/subscriptions/milib-subs --db data/subs.db sub add URL 100 name
-./build/subscriptions/milib-subs --db data/subs.db sub ls
-./build/subscriptions/milib-subs --db data/subs.db sub rm 1
-./build/subscriptions/milib-subs --db data/subs.db sub priority 1 200
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub add URL 100 name
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub ls
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub rm 1
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub priority 1 200
 
-./build/subscriptions/milib-subs --db data/subs.db --limit 0 fetch 1
-./build/subscriptions/milib-subs --db data/subs.db --limit 0 fetch --due
-./build/subscriptions/milib-subs --db data/subs.db --limit 0 test
-./build/subscriptions/milib-subs --db data/subs.db --limit 10 --window 240 run
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db --limit 0 fetch 1
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db --limit 0 fetch --due
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db --limit 0 test
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db --limit 10 --window 240 run
 
-./build/subscriptions/milib-subs --db data/subs.db proxies --limit 20
-./build/subscriptions/milib-subs --db data/subs.db proxy add 1 'vless://...'
-./build/subscriptions/milib-subs --db data/subs.db proxy rm 42
-./build/subscriptions/milib-subs --db data/subs.db proxy show 42
-./build/subscriptions/milib-subs --db data/subs.db stats
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db proxies --limit 20
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db proxy add 1 'vless://...'
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db proxy rm 42
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db proxy show 42
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db stats
 ```
 
 `run` — основной цикл:
@@ -102,20 +102,62 @@ Base64:
 
 Поддерживаются BOM, CRLF, пробелы, `+`/`-`, `/`/`_`, `=` и отсутствие `=`.
 
+## Группы подписок
+
+Подписки объединяются в группы. При первом открытии БД создаётся группа
+`All`, и все новые подписки попадают в неё. Это и есть одна большая группа
+со всеми подписками.
+
+```c
+mewnet_subs_group_list groups = mewnet_subs_load_groups(db);
+mewnet_subs_add_subscription_in_group(db, group_id, url, priority, name);
+```
+
+Для GUI/CLI доступны:
+
+```bash
+mewnet-subs --db data/subs.db groups
+mewnet-subs --db data/subs.db group add NAME [priority]
+mewnet-subs --db data/subs.db group rm ID
+mewnet-subs --db data/subs.db sub add URL 100 name
+```
+
+## Дедупликация конфигов
+
+Конфиги дедуплицируются в пределах группы по `SHA-256` от полной ссылки
+**без фрагмента `#name`**.
+
+- одинаковый конфиг из двух подписок одной группы = одна запись `proxies`;
+- одинаковый конфиг с разными `#name` = одна запись;
+- изменение пароля/UUID/транспорта = другая ссылка = новая запись;
+- дедупликации по host:port нет.
+
+Связь «конфиг ↔ подписки» хранится в `proxy_sources`. Если конфиг есть в
+нескольких подписках, он остаётся, пока есть хотя бы один источник.
+
 ## SQLite
 
 ```sql
+subscription_groups(
+  id, name, priority, enabled, created_at
+)
+
 subscriptions(
-  id, url, name, priority, enabled,
+  id, group_id, url, name, priority, enabled,
   fetch_interval_sec, next_fetch_at, last_fetch_at, last_status,
   failure_count, etag, last_modified, userinfo, last_error,
   generation, created_at
 )
 
 proxies(
-  id, subscription_id, link, link_hash, name, protocol, server, port,
-  rating, alive, last_tested_at, last_delay_ms, last_error,
-  last_up_day, last_down_day, last_seen_generation
+  id, group_id, link, link_hash, name, protocol, server, port,
+  rating, alive, manual, last_tested_at, last_delay_ms, last_error,
+  last_up_day, last_down_day,
+  UNIQUE(group_id, link_hash)
+)
+
+proxy_sources(
+  proxy_id, subscription_id, last_seen_generation
 )
 
 test_events(
@@ -143,7 +185,8 @@ test_events(
 ## Выбор кандидата
 
 ```sql
-ORDER BY s.priority DESC,
+ORDER BY g.priority DESC,
+         MAX(COALESCE(s.priority, 0)) DESC,
          p.rating DESC,
          COALESCE(p.last_tested_at, 0) ASC,
          p.id ASC
@@ -170,7 +213,7 @@ ORDER BY s.priority DESC,
 ## Потоковый ingest
 
 ```text
-milib_http_stream
+mewnet_http_stream
   → sniff plain/base64
   → streaming base64 decoder / passthrough
   → bounded line buffer
@@ -190,29 +233,29 @@ milib_http_stream
 ## C API
 
 ```c
-milib_subs_config cfg = milib_subs_config_default();
+mewnet_subs_config cfg = mewnet_subs_config_default();
 cfg.db_path = "data/subs.db";
-milib_subs_open_result opened = milib_subs_open(&cfg);
+mewnet_subs_open_result opened = mewnet_subs_open(&cfg);
 
-milib_error err = milib_subs_add_subscription(opened.db, url, 100, "name");
-milib_subs_fetch_result fetched = milib_subs_fetch_due(opened.db);
+mewnet_error err = mewnet_subs_add_subscription(opened.db, url, 100, "name");
+mewnet_subs_fetch_result fetched = mewnet_subs_fetch_due(opened.db);
 
-milib_instance* m = ...; /* milib_init с mixed_port = -1 */
-milib_subs_test_result tested = milib_subs_test_next(opened.db, m);
+mewnet_instance* m = ...; /* mewnet_init с mixed_port = -1 */
+mewnet_subs_test_result tested = mewnet_subs_test_next(opened.db, m);
 
-milib_subs_close(opened.db);
+mewnet_subs_close(opened.db);
 ```
 
 Для GUI добавлены:
 
-- `milib_subs_load_proxy_summaries` — страница без полной `link`;
-- `milib_subs_get_proxy` — одна полная запись по id;
-- `milib_subs_add_proxy` — ручной прокси (`manual = 1`);
-- `milib_subs_remove_proxy`;
-- `milib_subs_count_proxies`.
+- `mewnet_subs_load_proxy_summaries` — страница без полной `link`;
+- `mewnet_subs_get_proxy` — одна полная запись по id;
+- `mewnet_subs_add_proxy` — ручной прокси (`manual = 1`);
+- `mewnet_subs_remove_proxy`;
+- `mewnet_subs_count_proxies`.
 
 Ручные прокси не удаляются generation-cleanup, если их нет в подписке:
 `DELETE ... AND manual = 0`. Если ссылка снова появляется в подписке, она
 становится управляемой (`manual = 0`).
 
-Полный список — в `subscriptions/include/milib_subs.h`.
+Полный список — в `subscriptions/include/mewnet_subs.h`.

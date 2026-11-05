@@ -1,4 +1,4 @@
-# milib — отчёт о тестировании
+# mewnet — отчёт о тестировании
 
 Дата: 2026-11-05
 Версия: 0.2.0 (ABI v2), mihomo v1.19.33
@@ -20,12 +20,12 @@
 
 ```bash
 export PATH="$HOME/.local/go/bin:$PATH"
-export GOPATH="$HOME/.cache/milib/gopath"
-export GOCACHE="$HOME/.cache/milib/gocache"
+export GOPATH="$HOME/.cache/mewnet/gopath"
+export GOCACHE="$HOME/.cache/mewnet/gocache"
 make build
 ```
 
-Результат: `dist/libmilib.so` — 55 MiB.
+Результат: `dist/libmewnet.so` — 55 MiB.
 
 ## 1. Go-тесты задач
 
@@ -38,7 +38,7 @@ make build
 - `FreeTask` не возвращается, пока callback ещё выполняется.
 
 ```
-ok  	milib/internal/core
+ok  	mewnet/internal/core
 ```
 
 ## 2. Базовые ABI/unit-тесты (Python ctypes)
@@ -65,17 +65,17 @@ OK
 
 Покрыто:
 
-- создание `SharedVPNLink` и `milib_link_get_info`;
+- создание `SharedVPNLink` и `mewnet_link_get_info`;
 - генерация логина/пароля per-link SOCKS5;
 - ручной пароль (`password`) и upstream-пароль (`proxy_password`);
 - SOCKS5-авторизация: неверный пароль отклоняется, верный принимается;
 - `local_proxy = false` отключает локальный SOCKS;
 - ping/speed/exit_ip для мёртвого прокси возвращают ошибку без падения;
-- `milib_link_ping_many` для трёх мёртвых ссылок: три изолированных результата;
+- `mewnet_link_ping_many` для трёх мёртвых ссылок: три изолированных результата;
 - async ping/speed/exit_ip с C-callback;
-- poll async-задачи и `milib_task_destroy`;
-- `milib_remove_proxy` не даёт удалить прокси, принадлежащий ссылке;
-- `milib_link_destroy`: ссылка исчезает из реестра, SOCKS-порт закрывается.
+- poll async-задачи и `mewnet_task_destroy`;
+- `mewnet_remove_proxy` не даёт удалить прокси, принадлежащий ссылке;
+- `mewnet_link_destroy`: ссылка исчезает из реестра, SOCKS-порт закрывается.
 
 ## 4. C ABI
 
@@ -101,7 +101,7 @@ PASS  load links after destroy
 all C tests passed
 ```
 
-Тест собран с `#include "milib.h"` и линкуется с `libmilib.so`.
+Тест собран с `#include "mewnet.h"` и линкуется с `libmewnet.so`.
 
 Проверка ping из C через локальный Xray:
 
@@ -110,7 +110,7 @@ $ make test-c-ping-local
 2
 ```
 
-`2` — задержка в миллисекундах из `milib_ping_result.delay_ms`.
+`2` — задержка в миллисекундах из `mewnet_ping_result.delay_ms`.
 
 ## 5. Stress: 100 циклов add/remove
 
@@ -150,11 +150,11 @@ OK
    прокси переключён на №2. Загрузка завершилась полностью, её трафик остался
    в логе Xray №1; новый запрос ушёл в Xray №2.
 5. Параллельность: пока медленная загрузка идёт через прокси №1,
-   `milib_link_ping_many` пингует три других. Все три `ok`, загрузка в этот
+   `mewnet_link_ping_many` пингует три других. Все три `ok`, загрузка в этот
    момент ещё выполняется и затем завершается полностью.
-6. Async `milib_link_ping_many_async` с C-callback возвращает `ok` для всех трёх;
-   тот же сценарий через `milib_task_poll` также возвращает `ok`.
-7. `milib_link_destroy` для одной ссылки: она исчезает из реестра, её SOCKS-порт
+6. Async `mewnet_link_ping_many_async` с C-callback возвращает `ok` для всех трёх;
+   тот же сценарий через `mewnet_task_poll` также возвращает `ok`.
+7. `mewnet_link_destroy` для одной ссылки: она исчезает из реестра, её SOCKS-порт
    закрыт, запущенная async-задача отменена, остальные ссылки продолжают работать.
 
 Фрагмент вывода:
@@ -181,14 +181,14 @@ PASS  surviving links still work
 - проверен только Linux x86_64/glibc 2.44;
 - per-link SOCKS5 — TCP only;
 - внешняя реальная VLESS-ссылка проверяется опционально через
-  `MILIB_TEST_VLESS`;
+  `MEWNET_TEST_VLESS`;
 - «пинг» — HTTP-задержка, не ICMP;
 - один экземпляр ядра на процесс;
-- `milib_close` и `milib_link_destroy` нельзя вызывать из async callback;
+- `mewnet_close` и `mewnet_link_destroy` нельзя вызывать из async callback;
 - Xray 26.x блокирует loopback/private цели из VLESS-inbound по умолчанию;
   в тестовом конфиге добавлено `finalRules: allow 127.0.0.0/8`.
 
-## 8. Подписки (`libmilib_subs`)
+## 8. Подписки (`libmewnet_subs`)
 
 Сборка:
 
@@ -223,7 +223,7 @@ CTest:
   метаданные имя/сервер/порт обновились;
 - тест мёртвого прокси: `rating 0->-1`, повторный тест в тот же день `+0`;
 - в `test_events` пишутся все результаты;
-- `libmilib_subs` экспортирует только `milib_subs_*` символы.
+- `libmewnet_subs` экспортирует только `mewnet_subs_*` символы.
 
 E2E:
 
@@ -232,11 +232,13 @@ make test-e2e-subs
 ```
 
 ```
-17 passed, 0 failed
+20 passed, 0 failed
 ```
 
-Проверено: plain/base64 ingest, 4 конфига в SQLite, ручной прокси
-(`manual=1`) переживает повторный fetch с generation-cleanup, живой прокси
+Проверено: plain/base64 ingest, группа `All`, дедупликация конфигов между
+подписками одной группы, `#name` не влияет на идентичность, смена пароля создаёт новую запись,
+ручной прокси (`manual=1`) переживает повторный fetch с generation-cleanup,
+живой прокси
 через локальный Xray (`alive=1`, `rating 0->1`, метаданные), мёртвый прокси
 (`rating 0->-1`, повторный тест в тот же день не меняет рейтинг),
 `test_events`.
@@ -251,10 +253,26 @@ make gui
 
 Проверено:
 
-- `odin build` с `vendor:raylib` и `libmilib_subs`;
+- `odin build` с `vendor:raylib` и `libmewnet_subs`;
 - запуск окна 1200x760 на текущем DISPLAY;
-- GUI использует `milib_subs_load_proxy_summaries` (страница без `link`) и
-  `milib_subs_get_proxy` только для выбранной записи;
+- GUI использует `mewnet_subs_load_proxy_summaries` (страница без `link`) и
+  `mewnet_subs_get_proxy` только для выбранной записи;
 - добавление/удаление подписок и ручных прокси идёт через публичное API
-  `libmilib_subs`, без прямых SQL-запросов из GUI;
+  `libmewnet_subs`, без прямых SQL-запросов из GUI;
 - ручные прокси (`manual=1`) не удаляются generation-cleanup при fetch.
+
+## 10. Кросс-компиляция mingw
+
+```bash
+make build-mingw-core
+make subs-mingw
+```
+
+Получено:
+
+- `dist/windows/mewnet.dll` — PE32+ x86-64;
+- `dist/windows/libmewnet.dll.a` — import library;
+- `build-mingw/libs/mewnet-subs/libmewnet_subs.dll` — PE32+ x86-64;
+- `build-mingw/libs/mewnet-subs/mewnet-subs.exe` — PE32+ x86-64.
+
+Запуск под Wine не проверялся.

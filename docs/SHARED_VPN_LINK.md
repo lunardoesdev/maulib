@@ -3,42 +3,42 @@
 `SharedVPNLink` — объект, созданный из share-ссылки (`vless://`, `vmess://`,
 `trojan://`, `ss://`, ...). Он объединяет:
 
-1. прокси в группе `MILIB` (участвует в hot-swap через `milib_select_proxy`);
+1. прокси в группе `MEWNET` (участвует в hot-swap через `mewnet_select_proxy`);
 2. локальный SOCKS5 endpoint на `127.0.0.1:<random>` с обязательной
    авторизацией;
 3. методы `ping`, `speed`, `exit_ip` и их async-варианты.
 
-Заголовки: `include/milib.h`, `include/milib_types.h`.
+Заголовки: `libs/mewnet/include/mewnet.h`, `libs/mewnet/include/mewnet_types.h`.
 ABI v2 — структуры C, никаких JSON-строк. Ошибки возвращаются в результате,
-для простых операций — кодом `milib_error_code`.
+для простых операций — кодом `mewnet_error_code`.
 
 ## Создание
 
 ```c
-milib_link_options options = milib_link_options_default();
+mewnet_link_options options = mewnet_link_options_default();
 options.name = "my-node";
 options.select_proxy = true;
-options.username = "milib";
+options.username = "mewnet";
 options.password = "manual-pass";
 options.proxy_password = "upstream-secret";
 
-milib_link_result created = milib_link_create(instance, "vless://...", &options);
+mewnet_link_result created = mewnet_link_create(instance, "vless://...", &options);
 if (created.link == NULL) {
     fprintf(stderr, "%s\n", created.error.message);
 }
-milib_link *link = created.link;
+mewnet_link *link = created.link;
 ```
 
-`milib_link_options_default()` ставит `local_proxy = true` и
+`mewnet_link_options_default()` ставит `local_proxy = true` и
 `select_proxy = false`. Не используйте полностью нулевую структуру, если нужен
 локальный SOCKS5: берите default и меняйте поля.
 
 | Поле | По умолчанию | Смысл |
 |---|---|---|
 | `name` | fragment / type-server-port | имя прокси и ссылки |
-| `select_proxy` | `false` | сразу выбрать прокси в `MILIB` |
+| `select_proxy` | `false` | сразу выбрать прокси в `MEWNET` |
 | `local_proxy` | `true` | поднять per-link SOCKS5 |
-| `username` | `milib` | логин локального SOCKS5 |
+| `username` | `mewnet` | логин локального SOCKS5 |
 | `password` | случайные 18 байт | пароль локального SOCKS5 |
 | `proxy_password` | из ссылки | переопределить upstream credential |
 
@@ -51,7 +51,7 @@ milib_link *link = created.link;
 ## Информация
 
 ```c
-milib_link_info info = milib_link_get_info(link);
+mewnet_link_info info = mewnet_link_get_info(link);
 if (info.ok) {
     printf("id=%llu name=%s type=%s server=%s port=%d\n",
            (unsigned long long)info.id, info.name, info.proxy_type,
@@ -68,22 +68,22 @@ if (info.ok) {
 Список всех ссылок:
 
 ```c
-milib_link_list links = milib_load_links(instance);
+mewnet_link_list links = mewnet_load_links(instance);
 for (size_t i = 0; i < links.count; i++) {
     printf("%s\n", links.items[i].name);
 }
-milib_unload_links(links);
+mewnet_unload_links(links);
 ```
 
 ## Ping
 
 ```c
-milib_delay_options delay = milib_delay_options_default();
+mewnet_delay_options delay = mewnet_delay_options_default();
 delay.url = "https://www.gstatic.com/generate_204";
 delay.timeout_ms = 5000;
 delay.expected = "204";
 
-milib_ping_result ping = milib_link_ping(link, &delay);
+mewnet_ping_result ping = mewnet_link_ping(link, &delay);
 if (ping.ok) {
     printf("%u\n", ping.delay_ms);
 } else {
@@ -97,11 +97,11 @@ VLESS/...), а не ICMP-пингом до сервера прокси.
 ## Speed
 
 ```c
-milib_speed_options speed_options = milib_speed_options_default();
+mewnet_speed_options speed_options = mewnet_speed_options_default();
 speed_options.url = "https://speed.cloudflare.com/__down?bytes=5242880";
 speed_options.bytes = 5242880;
 
-milib_speed_result speed = milib_link_speed(link, &speed_options);
+mewnet_speed_result speed = mewnet_link_speed(link, &speed_options);
 if (speed.ok) {
     printf("%lld bytes in %.2f s = %.2f Mbit/s\n",
            speed.bytes, speed.seconds, speed.mbps);
@@ -114,30 +114,30 @@ if (speed.ok) {
 ## Exit IP
 
 ```c
-milib_exit_ip_options exit_options = milib_exit_ip_options_default();
+mewnet_exit_ip_options exit_options = mewnet_exit_ip_options_default();
 /* exit_options.url = "https://api.ipify.org"; */
-/* exit_options.format = MILIB_EXIT_IP_JSON; */
+/* exit_options.format = MEWNET_EXIT_IP_JSON; */
 
-milib_exit_ip_result exit_ip = milib_link_exit_ip(link, &exit_options);
+mewnet_exit_ip_result exit_ip = mewnet_link_exit_ip(link, &exit_options);
 if (exit_ip.ok && exit_ip.valid) {
     printf("%s\n", exit_ip.ip);
 }
 ```
 
 Опции: `url` (по умолчанию `https://api.ipify.org`), `format`
-(`MILIB_EXIT_IP_TEXT` / `MILIB_EXIT_IP_JSON`), `timeout_ms`.
+(`MEWNET_EXIT_IP_TEXT` / `MEWNET_EXIT_IP_JSON`), `timeout_ms`.
 
 ## Много прокси одновременно
 
 ```c
-milib_link *links[] = { link1, link2, link3 };
+mewnet_link *links[] = { link1, link2, link3 };
 
-milib_delay_options delay = milib_delay_options_default();
+mewnet_delay_options delay = mewnet_delay_options_default();
 delay.url = "https://www.gstatic.com/generate_204";
 delay.timeout_ms = 5000;
 
-milib_ping_many_result many =
-    milib_link_ping_many(instance, links, 3, &delay);
+mewnet_ping_many_result many =
+    mewnet_link_ping_many(instance, links, 3, &delay);
 for (size_t i = 0; i < many.count; i++) {
     if (many.items[i].ok) {
         printf("%zu: %u ms\n", i, many.items[i].delay_ms);
@@ -145,7 +145,7 @@ for (size_t i = 0; i < many.count; i++) {
         printf("%zu: error %d\n", i, many.items[i].error);
     }
 }
-milib_unload_ping_many(many);
+mewnet_unload_ping_many(many);
 ```
 
 Все пинги выполняются в отдельных горутинах; результат сохраняет порядок
@@ -153,43 +153,43 @@ milib_unload_ping_many(many);
 
 ## Async
 
-Callback получает `milib_task_result`:
+Callback получает `mewnet_task_result`:
 
 ```c
-static void on_done(const milib_task_result *result, void *user) {
-    if (result->state == MILIB_TASK_DONE && result->error == MILIB_ERROR_NONE) {
+static void on_done(const mewnet_task_result *result, void *user) {
+    if (result->state == MEWNET_TASK_DONE && result->error == MEWNET_ERROR_NONE) {
         printf("delay: %u\n", result->ping.delay_ms);
     }
 }
 
-milib_task *task = milib_link_ping_async(link, &delay, on_done, NULL);
+mewnet_task *task = mewnet_link_ping_async(link, &delay, on_done, NULL);
 /* ... */
-milib_task_destroy(task);
+mewnet_task_destroy(task);
 ```
 
 Либо poll без callback:
 
 ```c
-milib_task *task = milib_link_ping_async(link, &delay, NULL, NULL);
-milib_task_result result;
+mewnet_task *task = mewnet_link_ping_async(link, &delay, NULL, NULL);
+mewnet_task_result result;
 
-while ((result = milib_task_poll(task)).state == MILIB_TASK_RUNNING) {
+while ((result = mewnet_task_poll(task)).state == MEWNET_TASK_RUNNING) {
     /* main loop */
 }
-milib_task_destroy(task);
+mewnet_task_destroy(task);
 ```
 
 Правила:
 
 - callback вызывается на произвольном OS-потоке;
-- в callback нельзя вызывать `milib_close`, `milib_link_destroy`,
-  `milib_task_destroy`;
-- `milib_link_destroy` отменяет и ждёт задачи этой ссылки;
-- `milib_close` отменяет и ждёт все задачи инстанса;
-- `milib_task_cancel` только запрашивает отмену;
-- `milib_task_destroy` отменяет, ждёт и освобождает задачу.
+- в callback нельзя вызывать `mewnet_close`, `mewnet_link_destroy`,
+  `mewnet_task_destroy`;
+- `mewnet_link_destroy` отменяет и ждёт задачи этой ссылки;
+- `mewnet_close` отменяет и ждёт все задачи инстанса;
+- `mewnet_task_cancel` только запрашивает отмену;
+- `mewnet_task_destroy` отменяет, ждёт и освобождает задачу.
 
-Поля `milib_task_result`: `state`, `kind`, `error`, `delay`, `ping`, `speed`,
+Поля `mewnet_task_result`: `state`, `kind`, `error`, `delay`, `ping`, `speed`,
 `exit_ip`, `pings`, `ping_count`.
 
 ## Маршрутизация трафика
@@ -197,7 +197,7 @@ milib_task_destroy(task);
 Через глобальный mixed inbound и выбранную ссылку:
 
 ```bash
-milib_select_proxy(instance, "my-node");
+mewnet_select_proxy(instance, "my-node");
 curl -x http://127.0.0.1:<mixed_port> https://example.com
 ```
 
@@ -205,7 +205,7 @@ curl -x http://127.0.0.1:<mixed_port> https://example.com
 
 ```bash
 curl --socks5-hostname 127.0.0.1:<link_port> \
-     --proxy-user milib:<password> https://example.com
+     --proxy-user mewnet:<password> https://example.com
 ```
 
 Per-link SOCKS5 поддерживает TCP. UDP не проксируется.
@@ -215,7 +215,7 @@ Per-link SOCKS5 поддерживает TCP. UDP не проксируется.
 Готовый пример — `tests/c/test_ping.c`:
 
 ```bash
-cc tests/c/test_ping.c -Iinclude -Ldist -lmilib \
+cc tests/c/test_ping.c -Iinclude -Ldist -lmewnet \
    -Wl,-rpath,'$ORIGIN' -o dist/test_ping
 
 ./dist/test_ping 'vless://uuid@host:443?...#node' \
@@ -225,7 +225,7 @@ cc tests/c/test_ping.c -Iinclude -Ldist -lmilib \
 Или через переменные окружения:
 
 ```bash
-MILIB_TEST_VLESS='vless://...' ./dist/test_ping
+MEWNET_TEST_VLESS='vless://...' ./dist/test_ping
 ```
 
 Проверка без реальной ссылки (поднимает локальный Xray и target `204`):
@@ -245,23 +245,23 @@ make test-c-ping-local
 ## Удаление
 
 ```c
-milib_link_destroy(link);
+mewnet_link_destroy(link);
 ```
 
-Удаляет прокси из `MILIB`, закрывает SOCKS-listener, отменяет и ждёт async
+Удаляет прокси из `MEWNET`, закрывает SOCKS-listener, отменяет и ждёт async
 задачи этой ссылки, рвёт соединения с цепочкой прокси и освобождает handle.
 После вызова handle использовать нельзя. Прокси, принадлежащий ссылке, нельзя
-удалить через `milib_remove_proxy` — вернётся ошибка, а в лог будет подсказка
-использовать `milib_link_destroy`.
+удалить через `mewnet_remove_proxy` — вернётся ошибка, а в лог будет подсказка
+использовать `mewnet_link_destroy`.
 
 ## Потоки и безопасность
 
-- операции с `milib_instance*` и `milib_link*` можно вызывать из разных потоков;
-- `milib_close` и `milib_link_destroy` должны быть эксклюзивными: не
+- операции с `mewnet_instance*` и `mewnet_link*` можно вызывать из разных потоков;
+- `mewnet_close` и `mewnet_link_destroy` должны быть эксклюзивными: не
   вызывайте их одновременно с другими операциями над тем же объектом;
 - callback приходит на произвольном потоке; для UI используйте poll или
   перекладывайте результат в свою очередь;
 - log callback тоже вызывается на произвольном потоке;
-- не вызывайте `milib_close`/destroy из callback;
+- не вызывайте `mewnet_close`/destroy из callback;
 - panic в фоновой горутине mihomo не перехватывается — это ограничение
   in-process библиотеки.

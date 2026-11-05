@@ -8,9 +8,9 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 
-from test_api import DEAD_VLESS, LIB_PATH, Milib  # noqa: E402
+from test_api import DEAD_VLESS, LIB_PATH, Mewnet  # noqa: E402
 
-CYCLES = int(os.environ.get("MILIB_STRESS_CYCLES", "100"))
+CYCLES = int(os.environ.get("MEWNET_STRESS_CYCLES", "100"))
 
 
 def fd_count():
@@ -22,7 +22,7 @@ class StressTest(unittest.TestCase):
         if not os.path.exists(LIB_PATH):
             self.skipTest(f"{LIB_PATH} not built")
 
-        api = Milib()
+        api = Mewnet()
         api.init(options={"mixed_port": 0, "log_level": "error"})
         try:
             baseline_status = api.status()

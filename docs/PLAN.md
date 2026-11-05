@@ -1,4 +1,4 @@
-# milib — FFI-обёртка mihomo для Linux
+# mewnet — FFI-обёртка mihomo для Linux
 
 Статус: реализовано; см. `README.md`, `docs/BUILD.md` и `docs/TEST_REPORT.md`.
 
@@ -53,35 +53,25 @@ Python-проект, а не Go-ядро. Тег `v1.19.33` содержит к�
 ## 3. Архитектура
 
 ```text
-milib/
-├── cmd/milib/              package main, cgo, //export
-│   ├── main.go             lifecycle, proxy management
-│   ├── api.go              delay tests, tasks
-│   ├── link.go             SharedVPNLink
-│   ├── log.go              log callback bridge
-│   ├── convert.go          C struct <-> Go conversion
-│   ├── bridge.h
-│   └── bridge.c            C-trampoline для callback'ов
-├── internal/core/
-│   ├── core.go             lifecycle, состояние, блокировки
-│   ├── config.go           базовая конфигурация
-│   ├── proxies.go          add/remove/list/select
-│   ├── link.go             SharedVPNLink
-│   ├── group.go            пересборка MILIB/GLOBAL
-│   ├── delay.go            URLTest sync/async
-│   └── tasks.go            реестр задач, отмена, TTL
-├── include/
-│   ├── milib.h             публичные функции
-│   └── milib_types.h       общие структуры ABI
-├── tests/
-│   ├── c/test_api.c
-│   ├── python/test_api.py
-│   └── e2e/
-│       ├── run.py
-│       ├── xray-vless.json.tmpl
-│       └── target_204.py
+mewnet/
+├── libs/mewnet/               Go-ядро, c-shared libmewnet
+│   ├── go.mod
+│   ├── cmd/mewnet/            package main, cgo, //export
+│   ├── internal/core/         lifecycle, proxy management, tasks
+│   └── include/
+│       ├── mewnet.h           публичные функции
+│       └── mewnet_types.h     общие структуры ABI
+├── libs/mewnet-subs/          C/CMake библиотека подписок
+│   ├── include/mewnet_subs.h
+│   ├── src/                   SQLite, streaming ingest, rating, rate limit
+│   ├── tools/mewnet-subs.c    CLI
+│   └── tests/
+├── apps/gui/                  Odin + raylib GUI
+├── third_party/sqlite3/       amalgamation
+├── tests/                     C, Python, e2e
+├── cmake/toolchains/          mingw toolchain
 ├── Makefile
-├── LICENSE                 GPL-3.0
+├── LICENSE                    GPL-3.0
 └── docs/
 ```
 
@@ -94,9 +84,9 @@ mihomo хранит состояние в глобальных `tunnel`, `resolv
 Правила:
 
 - одновременно активен один handle;
-- `milib_init` при уже активном handle возвращает ошибку;
-- `milib_shutdown` останавливает listeners, закрывает прокси и задачи;
-- повторный `milib_init` после `shutdown` тестируется отдельно; если окажется
+- `mewnet_init` при уже активном handle возвращает ошибку;
+- `mewnet_shutdown` останавливает listeners, закрывает прокси и задачи;
+- повторный `mewnet_init` после `shutdown` тестируется отдельно; если окажется
   нестабильным — документируется как one-shot на процесс;
 - `dlclose` для `.so` запрещён: Go runtime не выгружается.
 
@@ -104,8 +94,8 @@ mihomo хранит состояние в глобальных `tunnel`, `resolv
 
 1. `constant.SetHomeDir(home)` до любого обращения к mihomo.
 2. Загрузить базовый YAML.
-3. Добавить/проверить группу `MILIB` (`type: select`, `proxies: [DIRECT]`).
-4. Добавить `MATCH,MILIB`, если в правилах нет `MATCH`.
+3. Добавить/проверить группу `MEWNET` (`type: select`, `proxies: [DIRECT]`).
+4. Добавить `MATCH,MEWNET`, если в правилах нет `MATCH`.
 5. Выбрать `mixed-port`:
    - `options.mixed_port > 0` — использовать его;
    - `options.mixed_port == -1` — inbound выключен;
@@ -123,17 +113,17 @@ log-level: warning
 ipv6: false
 proxies: []
 proxy-groups:
-  - name: MILIB
+  - name: MEWNET
     type: select
     proxies: [DIRECT]
 rules:
-  - MATCH,MILIB
+  - MATCH,MEWNET
 ```
 
 ### Hot-swap add/remove
 
 Правила mihomo хранят **имя** адаптера, а не указатель, поэтому замена группы в
-`tunnel.Proxies()` не ломает `MATCH,MILIB`.
+`tunnel.Proxies()` не ломает `MATCH,MEWNET`.
 
 Алгоритм добавления:
 
@@ -142,12 +132,12 @@ rules:
 2. Для каждого элемента:
    - проверить `type`, `server`, `port`;
    - определить имя: fragment → `type-server-port` → суффикс при коллизии;
-   - защитить имена `DIRECT`, `REJECT`, `GLOBAL`, `MILIB`;
+   - защитить имена `DIRECT`, `REJECT`, `GLOBAL`, `MEWNET`;
    - `adapter.ParseProxy(mapping)` для валидации.
 3. Построить новый map: копия `tunnel.Proxies()` + новые прокси.
-4. Пересобрать `MILIB`:
+4. Пересобрать `MEWNET`:
    - `provider.NewHealthCheck(proxies, C.DefaultTestURL, 5000, 0, true, nil)`;
-   - `provider.NewCompatibleProvider("MILIB", proxies, hc)`;
+   - `provider.NewCompatibleProvider("MEWNET", proxies, hc)`;
    - `outboundgroup.NewSelector(...)`;
    - обернуть `adapter.NewProxy(selector)`.
 5. Пересобрать `GLOBAL`, если он был создан автоматически.
@@ -181,7 +171,7 @@ Fallback: полный `executor.ApplyConfig(cfg, false)`, если меняет
 - для локального теста — `http://127.0.0.1:<port>/204`;
 - это HTTP-задержка, не ICMP.
 
-`milib_test_link` парсит ссылку, создаёт временный прокси, тестирует и закрывает
+`mewnet_test_link` парсит ссылку, создаёт временный прокси, тестирует и закрывает
 его, не добавляя в состояние.
 
 ### Потоки и callback'и
@@ -190,15 +180,15 @@ Fallback: полный `executor.ApplyConfig(cfg, false)`, если меняет
   потока);
 - async-задачи выполняются в Go-горутинах;
 - C callback вызывается через trampoline в `bridge.c`;
-- callback не должен вызывать `milib_shutdown` и не должен бросать C++
+- callback не должен вызывать `mewnet_shutdown` и не должен бросать C++
   исключения;
 - строки в callback живут только на время вызова;
-- `milib_shutdown` отменяет активные задачи и ждёт их завершения.
+- `mewnet_shutdown` отменяет активные задачи и ждёт их завершения.
 
 ### Ошибки и память
 
-- функции возвращают `MILIB_OK`/`MILIB_ERR_FAILED`, текст ошибки пишется в
-  `milib_error.message` (фиксированный буфер);
+- функции возвращают `MEWNET_OK`/`MEWNET_ERR_FAILED`, текст ошибки пишется в
+  `mewnet_error.message` (фиксированный буфер);
 - выходные данные — структуры C; строки копируются в массивы внутри структур,
   библиотека не выделяет память под результаты;
 - списки пишутся в буфер вызывающего кода, `count` всегда содержит полный размер;
@@ -213,30 +203,30 @@ ABI v2 — raylib-style: плоские функции, value-структуры
 
 Ключевые решения:
 
-- `milib_instance*`, `milib_link*`, `milib_task*` — opaque handles;
+- `mewnet_instance*`, `mewnet_link*`, `mewnet_task*` — opaque handles;
 - операции возвращают значение/результат, ошибка лежит в нём;
-- `milib_error` с кодом и сообщением используется для `init`/`link_create`;
-- `milib_error_code` — для частых операций;
-- списки: `milib_load_proxies`/`milib_unload_proxies`,
-  `milib_load_links`/`milib_unload_links`,
-  `milib_link_ping_many`/`milib_unload_ping_many`;
-- async: callback или `milib_task_poll`, отмена через `milib_task_cancel`,
-  освобождение через `milib_task_destroy`;
-- `milib_link_destroy` отменяет и ждёт задачи ссылки;
-- `milib_close` отменяет и ждёт все задачи инстанса;
-- log callback через `milib_set_log_callback`.
+- `mewnet_error` с кодом и сообщением используется для `init`/`link_create`;
+- `mewnet_error_code` — для частых операций;
+- списки: `mewnet_load_proxies`/`mewnet_unload_proxies`,
+  `mewnet_load_links`/`mewnet_unload_links`,
+  `mewnet_link_ping_many`/`mewnet_unload_ping_many`;
+- async: callback или `mewnet_task_poll`, отмена через `mewnet_task_cancel`,
+  освобождение через `mewnet_task_destroy`;
+- `mewnet_link_destroy` отменяет и ждёт задачи ссылки;
+- `mewnet_close` отменяет и ждёт все задачи инстанса;
+- log callback через `mewnet_set_log_callback`.
 
 Основные группы функций:
 
-- lifecycle: `milib_init`, `milib_close`, `milib_get_status`;
-- proxy management: `milib_add_proxy`, `milib_remove_proxy`,
-  `milib_select_proxy`, `milib_load_proxies`;
-- latency: `milib_test_delay`, `milib_test_link`, `milib_link_ping`;
-- `SharedVPNLink`: `milib_link_create`, `milib_link_destroy`,
-  `milib_link_get_info`, `milib_link_ping`, `milib_link_speed`,
-  `milib_link_exit_ip`;
-- async: `milib_*_async`, `milib_task_poll`, `milib_task_cancel`,
-  `milib_task_destroy`.
+- lifecycle: `mewnet_init`, `mewnet_close`, `mewnet_get_status`;
+- proxy management: `mewnet_add_proxy`, `mewnet_remove_proxy`,
+  `mewnet_select_proxy`, `mewnet_load_proxies`;
+- latency: `mewnet_test_delay`, `mewnet_test_link`, `mewnet_link_ping`;
+- `SharedVPNLink`: `mewnet_link_create`, `mewnet_link_destroy`,
+  `mewnet_link_get_info`, `mewnet_link_ping`, `mewnet_link_speed`,
+  `mewnet_link_exit_ip`;
+- async: `mewnet_*_async`, `mewnet_task_poll`, `mewnet_task_cancel`,
+  `mewnet_task_destroy`.
 
 ## 5. Сборка
 
@@ -248,8 +238,8 @@ curl -LO https://go.dev/dl/go1.26.0.linux-amd64.tar.gz
 tar -C "$HOME/.local" -xzf go1.26.0.linux-amd64.tar.gz
 export PATH="$HOME/.local/go/bin:$PATH"
 
-export GOPATH="$HOME/.cache/milib/gopath"
-export GOCACHE="$HOME/.cache/milib/gocache"
+export GOPATH="$HOME/.cache/mewnet/gopath"
+export GOCACHE="$HOME/.cache/mewnet/gocache"
 export GOMODCACHE="$GOPATH/pkg/mod"
 ```
 
@@ -260,8 +250,8 @@ CGO_ENABLED=1 go build \
   -trimpath \
   -buildmode=c-shared \
   -ldflags "-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33" \
-  -o dist/libmilib.so \
-  ./cmd/milib
+  -o dist/libmewnet.so \
+  cd libs/mewnet && ./cmd/mewnet
 ```
 
 Особенности:
@@ -271,7 +261,8 @@ CGO_ENABLED=1 go build \
 - памяти мало (~1.2 ГБ свободно), собирать с `-p=2`;
 - glibc с Fedora 45 может не подойти для старых дистрибутивов; для поставки
   собирать в более старом base-образе;
-- артефакты: `.so`, `include/milib.h`, sha256, `milib.pc`, примеры C/Python.
+- артефакты: `.so`, `libs/mewnet/include/mewnet.h`, sha256, `mewnet.pc`,
+  примеры C/Python; mingw-сборка — `dist/windows/mewnet.dll`.
 
 ## 6. Тестирование
 
@@ -283,7 +274,7 @@ CGO_ENABLED=1 go build \
 - удаление несуществующего/встроенного: ошибка;
 - удаление выбранного: fallback на `DIRECT`;
 - 100 циклов add/remove: FD, goroutine, RSS;
-- C-тест с `#include "milib.h"`;
+- C-тест с `#include "mewnet.h"`;
 - Python `ctypes`: `NULL`, неверные handle, освобождение строк, callback;
 - опционально `-race`.
 
@@ -306,7 +297,7 @@ CGO_ENABLED=1 go build \
 | 5 | remove прокси → прямой запрос | работает через DIRECT |
 | 6 | «мёртвый» прокси (blackhole/недоступный порт) | delay timeout, good-прокси работает |
 | 7 | VLESS + TLS self-signed (`allowInsecure`) | delay и трафик работают |
-| 8 | реальная ссылка из `MILIB_TEST_VLESS` | delay и трафик работают |
+| 8 | реальная ссылка из `MEWNET_TEST_VLESS` | delay и трафик работают |
 
 Реальная ссылка передаётся только через env/файл, не попадает в логи и git.
 
@@ -335,9 +326,9 @@ CGO_ENABLED=1 go build \
 - [x] **7. Документация** — Makefile, README, `TEST_REPORT.md`, LICENSE.
 - [x] **8. SharedVPNLink** — объект-ссылка, per-link SOCKS5 с авторизацией,
   ping/speed/exit_ip, конкурентные задачи, hot-swap; e2e на 4 прокси.
-- [x] **9. Подписки** — CMake/C-библиотека `libmilib_subs`: потоковый
+- [x] **9. Подписки** — CMake/C-библиотека `libmewnet_subs`: потоковый
   plain/base64 ingest, SQLite, priority, рейтинг +1/-1 с суточными лимитами,
-  общий rate limit, CLI `milib-subs`.
+  общий rate limit, CLI `mewnet-subs`.
 
 Оценка: MVP — ~1 рабочий день, полный вариант — 1.5–2 дня.
 

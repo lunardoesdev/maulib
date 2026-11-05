@@ -1,6 +1,6 @@
 <img src="assets/icon.svg" width="64" height="64" alt="">
 
-# milib
+# mewnet
 
 C-ABI (`c-shared`) обёртка над ядром [mihomo](https://github.com/MetaCubeX/mihomo)
 **v1.19.33** для Linux x86_64. Позволяет управлять прокси из C/Python/любого
@@ -20,8 +20,19 @@ C-ABI (`c-shared`) обёртка над ядром [mihomo](https://github.com/
 
 Публичный ABI — **v2**, raylib-style: простые функции, value-структуры,
 `load/unload` для списков, opaque handles и никаких JSON-строк.
-Заголовки: [`include/milib.h`](include/milib.h) и
-[`include/milib_types.h`](include/milib_types.h).
+Заголовки: [`libs/mewnet/include/mewnet.h`](libs/mewnet/include/mewnet.h) и
+[`libs/mewnet/include/mewnet_types.h`](libs/mewnet/include/mewnet_types.h).
+
+## Структура
+
+```text
+libs/mewnet/       Go-ядро, c-shared libmewnet
+libs/mewnet-subs/  C/CMake библиотека libmewnet_subs + CLI
+apps/gui/          Odin + raylib GUI
+third_party/       SQLite amalgamation
+tests/             C, Python, e2e
+docs/
+```
 
 ## Сборка
 
@@ -32,100 +43,108 @@ Toolchain ставится через mise:
 
 ```bash
 make deps           # go, odin, android-sdk, clang, cmake
-make build          # dist/libmilib.so
-make subs           # libmilib_subs + milib-subs
+make build          # dist/libmewnet.so
+make subs           # build/libs/mewnet-subs/libmewnet_subs.so + mewnet-subs
+make gui            # build/mewnet-gui
+```
+
+Кросс-компиляция под Windows/mingw:
+
+```bash
+make build-mingw-core   # dist/windows/mewnet.dll + import lib
+make subs-mingw         # build-mingw/libs/mewnet-subs/libmewnet_subs.dll
 ```
 
 ## Быстрый старт (C)
 
 Ошибки — в возвращаемом значении. Для `init` и `link_create` есть полная
-структура `milib_error` с сообщением; для остальных операций — код ошибки и
+структура `mewnet_error` с сообщением; для остальных операций — код ошибки и
 log callback.
 
 ```c
-#include "milib.h"
+#include "mewnet.h"
 
-milib_config config = milib_config_default();
+mewnet_config config = mewnet_config_default();
 config.mixed_port = 0;          /* 0: из YAML или свободный, -1: выключить */
 config.log_level = "warning";
 
-milib_init_result init = milib_init(&config);
+mewnet_init_result init = mewnet_init(&config);
 if (init.instance == NULL) {
     fprintf(stderr, "init: %s\n", init.error.message);
     return 1;
 }
-milib_instance *m = init.instance;
+mewnet_instance *m = init.instance;
 
-milib_link_options options = milib_link_options_default();
+mewnet_link_options options = mewnet_link_options_default();
 options.password = "manual-pass"; /* можно не задавать */
 options.local_proxy = true;
 
-milib_link_result created = milib_link_create(m, "vless://...", &options);
+mewnet_link_result created = mewnet_link_create(m, "vless://...", &options);
 if (created.link == NULL) {
     fprintf(stderr, "link: %s\n", created.error.message);
-    milib_close(m);
+    mewnet_close(m);
     return 1;
 }
-milib_link *link = created.link;
+mewnet_link *link = created.link;
 
-milib_link_info info = milib_link_get_info(link);
+mewnet_link_info info = mewnet_link_get_info(link);
 if (info.ok) {
     printf("socks5 %s user=%s pass=%s\n",
            info.socks_addr, info.socks_username, info.socks_password);
 }
 
-milib_delay_options delay = milib_delay_options_default();
+mewnet_delay_options delay = mewnet_delay_options_default();
 delay.url = "https://www.gstatic.com/generate_204";
 delay.timeout_ms = 5000;
 delay.expected = "204";
 
-milib_ping_result ping = milib_link_ping(link, &delay);
+mewnet_ping_result ping = mewnet_link_ping(link, &delay);
 if (ping.ok) {
     printf("delay: %u ms\n", ping.delay_ms);
 }
 
-milib_speed_options speed_options = milib_speed_options_default();
+mewnet_speed_options speed_options = mewnet_speed_options_default();
 speed_options.bytes = 5 * 1024 * 1024;
-milib_speed_result speed = milib_link_speed(link, &speed_options);
+mewnet_speed_result speed = mewnet_link_speed(link, &speed_options);
 if (speed.ok) {
     printf("speed: %.2f Mbit/s\n", speed.mbps);
 }
 
-milib_exit_ip_options exit_options = milib_exit_ip_options_default();
-milib_exit_ip_result exit_ip = milib_link_exit_ip(link, &exit_options);
+mewnet_exit_ip_options exit_options = mewnet_exit_ip_options_default();
+mewnet_exit_ip_result exit_ip = mewnet_link_exit_ip(link, &exit_options);
 if (exit_ip.ok && exit_ip.valid) {
     printf("exit ip: %s\n", exit_ip.ip);
 }
 
-milib_link_destroy(link);
-milib_close(m);
+mewnet_link_destroy(link);
+mewnet_close(m);
 ```
 
 ## SharedVPNLink
 
-`milib_link_create` разбирает ссылку и создаёт:
+`mewnet_link_create` разбирает ссылку и создаёт:
 
-1. прокси в группе `MILIB` (hot-swap через `milib_select_proxy`);
+1. прокси в группе `MEWNET` (hot-swap через `mewnet_select_proxy`);
 2. локальный SOCKS5 endpoint на `127.0.0.1:<random>` **с авторизацией**.
 
-Логин по умолчанию `milib`, пароль генерируется (18 случайных байт).
+Логин по умолчанию `mewnet`, пароль генерируется (18 случайных байт).
 Пароль можно задать вручную через `password`, а upstream-credential
 (VLESS UUID / Trojan password) — через `proxy_password`.
-`milib_link_options_default()` включает локальный SOCKS5 и не выбирает ссылку
+`mewnet_link_options_default()` включает локальный SOCKS5 и не выбирает ссылку
 активной.
 
 Методы:
 
 | Метод | Что делает |
 |---|---|
-| `milib_link_get_info` | id, имя, тип, сервер, порт, SOCKS-адрес и авторизация |
-| `milib_link_ping` | HTTP-задержка **трафиком через прокси** (`URLTest`) |
-| `milib_link_speed` | скачивает N байт через прокси, отдаёт `bytes`/`mbps` |
-| `milib_link_exit_ip` | GET к echo-сервису через прокси, отдаёт exit IP |
-| `milib_link_*_async` | то же в фоновой задаче + callback или poll |
-| `milib_link_ping_many` | пингует несколько ссылок одновременно |
-| `milib_load_links` | все живые ссылки в массив `milib_link_info` |
-| `milib_link_destroy` | удаляет прокси, закрывает SOCKS и освобождает handle |
+| `mewnet_link_get_info` | id, имя, тип, сервер, порт, SOCKS-адрес и авторизация |
+| `mewnet_link_ping` | HTTP-задержка **трафиком через прокси** (`URLTest`) |
+| `mewnet_link_speed` | скачивает N байт через прокси, отдаёт `bytes`/`mbps` |
+| `mewnet_link_exit_ip` | GET к echo-сервису через прокси, отдаёт exit IP |
+| `mewnet_link_*_async` | то же в фоновой задаче + callback или poll |
+| `mewnet_link_ping_many` | пингует несколько ссылок одновременно |
+| `mewnet_load_links` | все живые ссылки в массив `mewnet_link_info` |
+| `mewnet_link_destroy` | удаляет прокси, закрывает SOCKS и освобождает handle |
 
 Трафик через конкретную ссылку можно гнать двумя способами:
 
@@ -135,7 +154,7 @@ curl -x http://127.0.0.1:<mixed_port> https://example.com
 
 # 2. через per-link SOCKS5 с авторизацией
 curl --socks5-hostname 127.0.0.1:<link_port> \
-     --proxy-user milib:<generated-password> https://example.com
+     --proxy-user mewnet:<generated-password> https://example.com
 ```
 
 ## Списки и владение
@@ -143,69 +162,72 @@ curl --socks5-hostname 127.0.0.1:<link_port> \
 Списки выделяются библиотекой и освобождаются одной функцией:
 
 ```c
-milib_proxy_list proxies = milib_load_proxies(m);
+mewnet_proxy_list proxies = mewnet_load_proxies(m);
 for (size_t i = 0; i < proxies.count; i++) {
     printf("%s (%s)\n", proxies.items[i].name, proxies.items[i].proxy_type);
 }
 printf("selected: %s\n", proxies.selected);
-milib_unload_proxies(proxies);
+mewnet_unload_proxies(proxies);
 ```
 
-То же для `milib_load_links` / `milib_unload_links` и
-`milib_link_ping_many` / `milib_unload_ping_many`.
+То же для `mewnet_load_links` / `mewnet_unload_links` и
+`mewnet_link_ping_many` / `mewnet_unload_ping_many`.
 
 | Что | Кто освобождает |
 |---|---|
-| `milib_instance*` | `milib_close()` |
-| `milib_link*` | `milib_link_destroy()` |
-| `milib_task*` | `milib_task_destroy()` |
-| `milib_load_*()` | `milib_unload_*()` |
-| `milib_version()` | не нужно, статическая строка |
+| `mewnet_instance*` | `mewnet_close()` |
+| `mewnet_link*` | `mewnet_link_destroy()` |
+| `mewnet_task*` | `mewnet_task_destroy()` |
+| `mewnet_load_*()` | `mewnet_unload_*()` |
+| `mewnet_version()` | не нужно, статическая строка |
 
 ## Async
 
 ```c
-static void on_ping(const milib_task_result *result, void *user) {
-    if (result->state == MILIB_TASK_DONE && result->error == MILIB_ERROR_NONE) {
+static void on_ping(const mewnet_task_result *result, void *user) {
+    if (result->state == MEWNET_TASK_DONE && result->error == MEWNET_ERROR_NONE) {
         printf("delay: %u\n", result->ping.delay_ms);
     }
 }
 
-milib_task *task = milib_link_ping_async(link, &delay, on_ping, NULL);
+mewnet_task *task = mewnet_link_ping_async(link, &delay, on_ping, NULL);
 /* ... */
-milib_task_destroy(task);
+mewnet_task_destroy(task);
 ```
 
 Callback вызывается из Go-горутины, то есть на произвольном OS-потоке. Внутри
-callback нельзя вызывать `milib_close`, `milib_link_destroy` и
-`milib_task_destroy`. Если нужен main-thread loop, используйте poll:
+callback нельзя вызывать `mewnet_close`, `mewnet_link_destroy` и
+`mewnet_task_destroy`. Если нужен main-thread loop, используйте poll:
 
 ```c
-milib_task *task = milib_link_ping_async(link, &delay, NULL, NULL);
-milib_task_result result;
+mewnet_task *task = mewnet_link_ping_async(link, &delay, NULL, NULL);
+mewnet_task_result result;
 
-while ((result = milib_task_poll(task)).state == MILIB_TASK_RUNNING) {
+while ((result = mewnet_task_poll(task)).state == MEWNET_TASK_RUNNING) {
     /* main loop */
 }
-milib_task_destroy(task);
+mewnet_task_destroy(task);
 ```
 
-`milib_link_destroy` и `milib_close` отменяют и ждут связанные задачи.
+`mewnet_link_destroy` и `mewnet_close` отменяют и ждут связанные задачи.
 
 ## Подписки
 
-Рядом с `milib` есть CMake-библиотека `libmilib_subs` и CLI `milib-subs`:
+Рядом с `mewnet` есть CMake-библиотека `libmewnet_subs` и CLI `mewnet-subs`:
 
 - потоково качает plain/base64 подписки;
 - пишет конфиги в SQLite;
-- хранит числовой `priority` подписки;
+- группирует подписки; по умолчанию есть группа `All` со всеми подписками;
+- дедуплицирует конфиги в пределах группы по полной ссылке без `#name`;
+  смена пароля/UUID создаёт новую запись, дедупликации по host нет;
+- хранит числовой `priority` подписки и группы;
 - тестирует конфиги и ведёт рейтинг `+1/-1` с суточными ограничениями;
 - соблюдает общий лимит запросов (по умолчанию 10 за 240 секунд).
 
 ```bash
 make subs
-./build/subscriptions/milib-subs --db data/subs.db sub add URL 100 name
-./build/subscriptions/milib-subs --db data/subs.db run --limit 10 --window 240
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub add URL 100 name
+./build/libs/mewnet-subs/mewnet-subs --db data/subs.db run --limit 10 --window 240
 ```
 
 Подробности — в [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
@@ -216,44 +238,45 @@ make subs
 
 ```bash
 make gui
-./build/milib-gui --db data/subs.db
+./build/mewnet-gui --db data/subs.db
 ```
 
-Она умеет добавлять/удалять подписки, листать прокси страницами, смотреть
-полную ссылку выбранного конфига, добавлять ручные прокси и удалять их.
-GUI не загружает все прокси подписки: только страницу и одну выбранную запись.
+Она умеет работать с группами подписок, добавлять/удалять подписки, листать
+прокси группы страницами, смотреть полную ссылку выбранного конфига,
+добавлять ручные прокси и удалять их. GUI не загружает все прокси группы:
+только страницу и одну выбранную запись.
 
 Подробности — в [`gui/README.md`](gui/README.md).
 
 ## API
 
-Полное описание — в [`include/milib.h`](include/milib.h).
+Полное описание — в [`libs/mewnet/include/mewnet.h`](libs/mewnet/include/mewnet.h).
 
 Основные группы:
 
-- lifecycle: `milib_init`, `milib_close`, `milib_get_status`;
-- proxy management: `milib_load_proxies`, `milib_add_proxy`,
-  `milib_remove_proxy`, `milib_select_proxy`;
-- latency: `milib_test_delay`, `milib_test_link`;
-- `SharedVPNLink`: `milib_link_create`, `milib_link_destroy`,
-  `milib_link_get_info`, `milib_load_links`, `milib_link_ping`,
-  `milib_link_speed`, `milib_link_exit_ip`;
-- async: `milib_*_async`, `milib_task_poll`, `milib_task_cancel`,
-  `milib_task_destroy`;
-- logging: `milib_set_log_level`, `milib_set_log_callback`.
+- lifecycle: `mewnet_init`, `mewnet_close`, `mewnet_get_status`;
+- proxy management: `mewnet_load_proxies`, `mewnet_add_proxy`,
+  `mewnet_remove_proxy`, `mewnet_select_proxy`;
+- latency: `mewnet_test_delay`, `mewnet_test_link`;
+- `SharedVPNLink`: `mewnet_link_create`, `mewnet_link_destroy`,
+  `mewnet_link_get_info`, `mewnet_load_links`, `mewnet_link_ping`,
+  `mewnet_link_speed`, `mewnet_link_exit_ip`;
+- async: `mewnet_*_async`, `mewnet_task_poll`, `mewnet_task_cancel`,
+  `mewnet_task_destroy`;
+- logging: `mewnet_set_log_level`, `mewnet_set_log_callback`.
 
 ## Тесты
 
 ```bash
 make test-unit       # ABI/логика через ctypes
 make test-links      # SharedVPNLink без сети (auth, ошибки, destroy)
-make test-c          # C-тест с #include "milib.h"
+make test-c          # C-тест с #include "mewnet.h"
 make test-stress     # 100 циклов add/remove, утечки FD/goroutine/RSS
 make xray            # скачать Xray для e2e (в /tmp, не коммитится)
 make test-e2e        # локальный Xray + VLESS + mixed inbound
 make test-e2e-links  # 4 прокси, hot-swap, конкурентные пинги
 make test-c-ping-local                          # ping из C, локальный Xray
-make test-c-ping MILIB_TEST_VLESS='vless://...' # ping из C, реальная ссылка
+make test-c-ping MEWNET_TEST_VLESS='vless://...' # ping из C, реальная ссылка
 ```
 
 `test-e2e-links` — главный сценарий: Python создаёт 4 прокси через FFI,
@@ -270,7 +293,7 @@ make test-c-ping MILIB_TEST_VLESS='vless://...' # ping из C, реальная 
 - TUN/системный VPN не входит в эту сборку (нужен тег `with_gvisor`);
 - «пинг» — это HTTP-задержка (`URLTest`), не ICMP;
 - per-link SOCKS5 поддерживает TCP (UDP не проксируется);
-- `milib_close`/`milib_link_destroy` нельзя вызывать из async callback;
+- `mewnet_close`/`mewnet_link_destroy` нельзя вызывать из async callback;
 - panic в фоновой горутине mihomo роняет процесс: для недоверенных конфигов
   используйте отдельный процесс;
 - сборка glibc-зависимая: для старых дистрибутивов собирайте в старом base image.

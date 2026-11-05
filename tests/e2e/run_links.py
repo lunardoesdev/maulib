@@ -21,14 +21,14 @@ import uuid
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-LIB_PATH = os.environ.get("MILIB_LIB", os.path.join(ROOT, "dist", "libmilib.so"))
+LIB_PATH = os.environ.get("MEWNET_LIB", os.path.join(ROOT, "dist", "libmewnet.so"))
 XRAY_BIN = os.environ.get("XRAY_BIN", "/tmp/opencode/xray/xray")
 
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, "tests", "python"))
 
 import target_204  # noqa: E402
-from test_api import Milib  # noqa: E402
+from test_api import Mewnet  # noqa: E402
 
 PASSED = []
 FAILED = []
@@ -224,13 +224,13 @@ def main():
         print(f"SKIP: {LIB_PATH} not built")
         return 2
 
-    workdir = tempfile.mkdtemp(prefix="milib-links-")
+    workdir = tempfile.mkdtemp(prefix="mewnet-links-")
     target, _ = target_204.start(0)
     target_port = target.server_address[1]
     base_url = f"http://127.0.0.1:{target_port}"
     xrays = [start_xray(workdir, i) for i in range(PROXIES)]
 
-    api = Milib()
+    api = Mewnet()
     api.init(os.path.join(workdir, "home"), options={"mixed_port": 0, "log_level": "error"})
     mixed_port = api.status()["mixed_port"]
 

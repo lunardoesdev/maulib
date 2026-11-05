@@ -1,4 +1,4 @@
-# Сборка milib
+# Сборка mewnet
 
 ## Требования
 
@@ -12,7 +12,7 @@
 | Python (тесты) | 3.10+ |
 | Xray (только e2e) | 26.x |
 
-Ядро mihomo зафиксировано в `go.mod` (`v1.19.33`). Тег `main` не используется:
+Ядро mihomo зафиксировано в `libs/mewnet/go.mod` (`v1.19.33`). Тег `main` не используется:
 в нём лежит другой проект.
 
 ## Toolchain через mise
@@ -37,8 +37,8 @@ mise install
 Кэши Go можно держать вне домашнего каталога:
 
 ```bash
-export GOPATH="$HOME/.cache/milib/gopath"
-export GOCACHE="$HOME/.cache/milib/gocache"
+export GOPATH="$HOME/.cache/mewnet/gopath"
+export GOCACHE="$HOME/.cache/mewnet/gocache"
 export GOMODCACHE="$GOPATH/pkg/mod"
 ```
 
@@ -51,36 +51,37 @@ make build
 Эквивалентная команда:
 
 ```bash
+cd libs/mewnet
 CGO_ENABLED=1 mise exec -- go build \
   -p=2 \
   -trimpath \
   -buildmode=c-shared \
   -ldflags "-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33" \
-  -o dist/libmilib.so \
-  ./cmd/milib
+  -o ../../dist/libmewnet.so \
+  ./cmd/mewnet
 ```
 
 C-библиотека подписок:
 
 ```bash
 make subs
-# build/subscriptions/libmilib_subs.so
-# build/subscriptions/milib-subs
+# build/libs/mewnet-subs/libmewnet_subs.so
+# build/libs/mewnet-subs/mewnet-subs
 ```
 
 GUI на Odin/raylib:
 
 ```bash
 make gui
-# build/milib-gui
+# build/mewnet-gui
 ```
 
 Результат:
 
-- `dist/libmilib.so` — библиотека;
-- `dist/libmilib.h` — заголовок, сгенерированный cgo;
-- `include/milib.h` и `include/milib_types.h` — публичные заголовки
-  (используйте их; `milib.h` подключает `milib_types.h`).
+- `dist/libmewnet.so` — библиотека;
+- `dist/libmewnet.h` — заголовок, сгенерированный cgo;
+- `libs/mewnet/include/mewnet.h` и `mewnet_types.h` — публичные заголовки
+  (используйте их; `mewnet.h` подключает `mewnet_types.h`).
 
 `-p=2` ограничивает параллелизм: mihomo большой, на машинах с 1–2 ГБ RAM
 сборка с большим `-p` может упасть по памяти.
@@ -88,20 +89,39 @@ make gui
 ## Использование из C
 
 ```bash
-cc app.c -Iinclude -Ldist -lmilib -Wl,-rpath,'$ORIGIN' -o app
+cc app.c -Ilibs/mewnet/include -Ldist -lmewnet -Wl,-rpath,'$ORIGIN' -o app
 ```
 
-`$ORIGIN` нужен, чтобы `libmilib.so` находилась рядом с бинарником. Иначе
+`$ORIGIN` нужен, чтобы `libmewnet.so` находилась рядом с бинарником. Иначе
 задайте `LD_LIBRARY_PATH=dist`.
 
 ## Использование из Python
 
 ```python
 import ctypes
-lib = ctypes.CDLL("dist/libmilib.so")
+lib = ctypes.CDLL("dist/libmewnet.so")
 ```
 
 Полный пример — в `README.md` и `tests/python/test_api.py`.
+
+## Кросс-компиляция под Windows (mingw)
+
+Нужен `x86_64-w64-mingw32-gcc` (в окружении уже есть).
+
+```bash
+make build-mingw-core
+# dist/windows/mewnet.dll
+# dist/windows/libmewnet.dll.a
+# dist/windows/mewnet.def
+
+make subs-mingw
+# build-mingw/libs/mewnet-subs/libmewnet_subs.dll
+# build-mingw/libs/mewnet-subs/mewnet-subs.exe
+```
+
+`subs-mingw` использует `cmake/toolchains/mingw-x86_64.cmake`.
+Тесты под Windows не собираются (`MEWNET_SUBS_BUILD_TESTS=OFF`).
+Запуск под Wine не проверялся.
 
 ## Тесты
 
@@ -114,7 +134,7 @@ make xray            # скачать Xray в /tmp/opencode/xray
 make test-e2e        # одиночный VLESS + mixed inbound
 make test-e2e-links  # 4 прокси, hot-swap, конкурентные пинги
 make test-c-ping-local                 # ping из C через локальный Xray
-make test-c-ping MILIB_TEST_VLESS='vless://...'  # ping из C через реальную ссылку
+make test-c-ping MEWNET_TEST_VLESS='vless://...'  # ping из C через реальную ссылку
 make test-subs       # C-тесты подписок (base64, SHA-256, rating)
 make test-e2e-subs   # локальный Xray + HTTP-подписка + SQLite/rating
 ```
@@ -133,7 +153,7 @@ make test-e2e-subs   # локальный Xray + HTTP-подписка + SQLite/
 | Симптом | Причина |
 |---|---|
 | `mixed inbound failed to listen` | порт занят, задайте `mixed_port: 0` |
-| `milib is already initialized` | в процессе уже живёт экземпляр; вызовите `milib_shutdown` |
-| `undefined reference to milib_*` | не подключён `-lmilib` или не тот `include` |
-| `libmilib.so: cannot open shared object file` | добавьте `-Wl,-rpath` или `LD_LIBRARY_PATH` |
+| `mewnet is already initialized` | в процессе уже живёт экземпляр; вызовите `mewnet_shutdown` |
+| `undefined reference to mewnet_*` | не подключён `-lmewnet` или не тот `include` |
+| `libmewnet.so: cannot open shared object file` | добавьте `-Wl,-rpath` или `LD_LIBRARY_PATH` |
 | e2e: `blocked target ... blackholing` | Xray 26.x блокирует loopback; в тестовом конфиге есть `finalRules: allow` |

@@ -1,4 +1,4 @@
-# milib — build and test
+# mewnet — build and test
 
 MISE    ?= mise
 GO      := $(MISE) exec -- go
@@ -9,13 +9,17 @@ X11_LIB  := $(shell ldconfig -p 2>/dev/null | awk '/libX11.so.6 /{print $$NF; ex
 XCB_LIB  := $(shell ldconfig -p 2>/dev/null | awk '/libxcb.so.1 /{print $$NF; exit}')
 XAU_LIB  := $(shell ldconfig -p 2>/dev/null | awk '/libXau.so.6 /{print $$NF; exit}')
 
-export GOPATH  ?= $(HOME)/.cache/milib/gopath
-export GOCACHE ?= $(HOME)/.cache/milib/gocache
+MINGW_CC     := x86_64-w64-mingw32-gcc
+MINGW_DLLTOOL:= x86_64-w64-mingw32-dlltool
+MINGW_OBJDUMP:= x86_64-w64-mingw32-objdump
+
+export GOPATH  ?= $(HOME)/.cache/mewnet/gopath
+export GOCACHE ?= $(HOME)/.cache/mewnet/gocache
 export CGO_ENABLED = 1
 
 LDFLAGS = -s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33
 
-.PHONY: all deps build subs gui test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
+.PHONY: all deps build build-mingw-core subs subs-mingw gui test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
 
 all: build
 
@@ -24,13 +28,27 @@ deps:
 
 build:
 	mkdir -p dist
-	$(GO) build -p=2 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o dist/libmilib.so ./cmd/milib
-	@ls -lh dist/libmilib.so
+	cd libs/mewnet && $(GO) build -p=2 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o ../../dist/libmewnet.so ./cmd/mewnet
+	@ls -lh dist/libmewnet.so
+
+build-mingw-core:
+	mkdir -p dist/windows
+	cd libs/mewnet && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=$(MINGW_CC) $(GO) build -p=2 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o ../../dist/windows/mewnet.dll ./cmd/mewnet
+	{ echo 'LIBRARY mewnet.dll'; echo 'EXPORTS'; $(MINGW_OBJDUMP) -p dist/windows/mewnet.dll | grep -oE 'mewnet_[A-Za-z0-9_]+' | sort -u | sed 's/^/  /'; } > dist/windows/mewnet.def
+	$(MINGW_DLLTOOL) -d dist/windows/mewnet.def -l dist/windows/libmewnet.dll.a -D mewnet.dll
+
+subs-mingw: build-mingw-core
+	$(MISE) exec -- cmake -S . -B build-mingw \
+		-DCMAKE_TOOLCHAIN_FILE=$(CURDIR)/cmake/toolchains/mingw-x86_64.cmake \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DMEWNET_SUBS_BUILD_TESTS=OFF \
+		-DMEWNET_LIBRARY=$(CURDIR)/dist/windows/libmewnet.dll.a
+	$(MISE) exec -- cmake --build build-mingw -j$(shell nproc)
 
 test: test-unit test-links test-c test-subs test-e2e test-e2e-subs test-e2e-links
 
 test-unit: build
-	$(GO) test ./internal/...
+	cd libs/mewnet && $(GO) test ./internal/...
 	$(PYTHON) tests/python/test_api.py
 
 test-links: build
@@ -56,29 +74,29 @@ gui: subs
 	ln -sf "$(XCB_LIB)" build/gui/syslib/libxcb.so.1
 	ln -sf "$(XAU_LIB)" build/gui/syslib/libXau.so
 	ln -sf "$(XAU_LIB)" build/gui/syslib/libXau.so.6
-	LIBRARY_PATH="$(CURDIR)/build/gui/syslib" $(MISE) exec -- odin build gui \
-		-out:build/milib-gui \
-		-extra-linker-flags:"-L$(CURDIR)/build/subscriptions -L$(CURDIR)/dist -lmilib_subs -lmilib -Wl,-rpath,$(CURDIR)/build/subscriptions:$(CURDIR)/dist"
+	LIBRARY_PATH="$(CURDIR)/build/gui/syslib" $(MISE) exec -- odin build apps/gui \
+		-out:build/mewnet-gui \
+		-extra-linker-flags:"-L$(CURDIR)/build/libs/mewnet-subs -L$(CURDIR)/dist -lmewnet_subs -lmewnet -Wl,-rpath,$(CURDIR)/build/libs/mewnet-subs:$(CURDIR)/dist"
 
 test-stress: build
 	$(PYTHON) tests/python/test_stress.py
 
 test-c: build
-	$(CC) tests/c/test_api.c -Iinclude -Ldist -lmilib -Wl,-rpath,'$$ORIGIN' -o dist/test_api
+	$(CC) tests/c/test_api.c -Ilibs/mewnet/include -Ldist -lmewnet -Wl,-rpath,'$$ORIGIN' -o dist/test_api
 	./dist/test_api
 
 # Ping through the C ABI using a real link:
-#   make test-c-ping MILIB_TEST_VLESS='vless://...' [MILIB_PING_URL='http://.../204']
+#   make test-c-ping MEWNET_TEST_VLESS='vless://...' [MEWNET_PING_URL='http://.../204']
 test-c-ping: build
-	$(CC) tests/c/test_ping.c -Iinclude -Ldist -lmilib -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
-	@if [ -z "$(MILIB_TEST_VLESS)" ]; then \
-		echo "set MILIB_TEST_VLESS='vless://...'"; exit 2; \
+	$(CC) tests/c/test_ping.c -Ilibs/mewnet/include -Ldist -lmewnet -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
+	@if [ -z "$(MEWNET_TEST_VLESS)" ]; then \
+		echo "set MEWNET_TEST_VLESS='vless://...'"; exit 2; \
 	fi
-	./dist/test_ping "$(MILIB_TEST_VLESS)" "$(MILIB_PING_URL)"
+	./dist/test_ping "$(MEWNET_TEST_VLESS)" "$(MEWNET_PING_URL)"
 
 # Same, but against a local Xray VLESS server (no real link needed).
 test-c-ping-local: build
-	$(CC) tests/c/test_ping.c -Iinclude -Ldist -lmilib -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
+	$(CC) tests/c/test_ping.c -Ilibs/mewnet/include -Ldist -lmewnet -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
 	$(PYTHON) tests/e2e/c_ping_demo.py
 
 test-e2e: build
@@ -96,4 +114,4 @@ xray:
 	chmod +x /tmp/opencode/xray/xray
 
 clean:
-	rm -rf dist build
+	rm -rf dist build build-mingw

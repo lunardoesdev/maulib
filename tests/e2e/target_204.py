@@ -58,7 +58,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._write_slow(total, chunks, delay)
             return
 
-        body = b"milib target\n"
+        body = b"mewnet target\n"
         self._body(body)
 
     def _body(self, body):

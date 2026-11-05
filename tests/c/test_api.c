@@ -1,8 +1,8 @@
 /*
- * Minimal C ABI smoke test for libmilib.so.
+ * Minimal C ABI smoke test for libmewnet.so.
  *
  * Build (see Makefile):
- *   gcc tests/c/test_api.c -Iinclude -Ldist -lmilib \
+ *   gcc tests/c/test_api.c -Iinclude -Ldist -lmewnet \
  *       -Wl,-rpath,'$ORIGIN' -o dist/test_api
  */
 
@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "milib.h"
+#include "mewnet.h"
 
 static int failures = 0;
 
@@ -24,30 +24,30 @@ static void expect(int condition, const char *what, const char *detail) {
 }
 
 int main(void) {
-    expect(milib_abi_version() == MILIB_ABI_VERSION, "abi version", "");
-    expect(strcmp(milib_version(), "0.2.0") == 0, "version", milib_version());
+    expect(mewnet_abi_version() == MEWNET_ABI_VERSION, "abi version", "");
+    expect(strcmp(mewnet_version(), "0.2.0") == 0, "version", mewnet_version());
 
-    milib_config config = milib_config_default();
-    milib_init_result init = milib_init(&config);
-    expect(init.instance != NULL && init.error.code == MILIB_ERROR_NONE,
+    mewnet_config config = mewnet_config_default();
+    mewnet_init_result init = mewnet_init(&config);
+    expect(init.instance != NULL && init.error.code == MEWNET_ERROR_NONE,
            "init", init.error.message);
     if (init.instance == NULL) {
         return 1;
     }
-    milib_instance *instance = init.instance;
+    mewnet_instance *instance = init.instance;
 
-    milib_status_info status = milib_get_status(instance);
+    mewnet_status_info status = mewnet_get_status(instance);
     expect(status.ok && status.running, "status ok", "");
 
     const char *link =
         "vless://11111111-2222-3333-4444-555555555555@127.0.0.1:1"
         "?encryption=none&security=none&type=tcp#c-dead-node";
 
-    milib_add_options add_options = milib_add_options_default();
-    milib_error_code rc = milib_add_proxy(instance, link, &add_options);
-    expect(rc == MILIB_ERROR_NONE, "add proxy", "");
+    mewnet_add_options add_options = mewnet_add_options_default();
+    mewnet_error_code rc = mewnet_add_proxy(instance, link, &add_options);
+    expect(rc == MEWNET_ERROR_NONE, "add proxy", "");
 
-    milib_proxy_list proxies = milib_load_proxies(instance);
+    mewnet_proxy_list proxies = mewnet_load_proxies(instance);
     int found = 0;
     for (size_t i = 0; i < proxies.count; i++) {
         if (strcmp(proxies.items[i].name, "c-dead-node") == 0) {
@@ -58,44 +58,44 @@ int main(void) {
     expect(proxies.ok && found, "load proxies", "");
     expect(strcmp(proxies.selected, "c-dead-node") == 0,
            "added proxy is selected", proxies.selected);
-    milib_unload_proxies(proxies);
+    mewnet_unload_proxies(proxies);
 
-    expect(milib_select_proxy(instance, "DIRECT") == MILIB_ERROR_NONE,
+    expect(mewnet_select_proxy(instance, "DIRECT") == MEWNET_ERROR_NONE,
            "select DIRECT", "");
 
-    expect(milib_remove_proxy(instance, "c-dead-node") == MILIB_ERROR_NONE,
+    expect(mewnet_remove_proxy(instance, "c-dead-node") == MEWNET_ERROR_NONE,
            "remove proxy", "");
-    expect(milib_remove_proxy(instance, "nope") != MILIB_ERROR_NONE,
+    expect(mewnet_remove_proxy(instance, "nope") != MEWNET_ERROR_NONE,
            "remove missing fails", "");
 
-    milib_link_options link_options = milib_link_options_default();
-    milib_link_result created = milib_link_create(instance, link, &link_options);
-    expect(created.link != NULL && created.error.code == MILIB_ERROR_NONE,
+    mewnet_link_options link_options = mewnet_link_options_default();
+    mewnet_link_result created = mewnet_link_create(instance, link, &link_options);
+    expect(created.link != NULL && created.error.code == MEWNET_ERROR_NONE,
            "link create", created.error.message);
     if (created.link != NULL) {
-        milib_link *vpn = created.link;
+        mewnet_link *vpn = created.link;
 
-        milib_link_info info = milib_link_get_info(vpn);
+        mewnet_link_info info = mewnet_link_get_info(vpn);
         expect(info.ok && info.id > 0 && strcmp(info.name, "c-dead-node") == 0 &&
                    info.socks_addr[0] != '\0',
                "link info", "");
-        expect(strcmp(info.socks_username, "milib") == 0 &&
+        expect(strcmp(info.socks_username, "mewnet") == 0 &&
                    strlen(info.socks_password) >= 16,
                "link info has auth", info.socks_password);
 
-        milib_link_list links = milib_load_links(instance);
+        mewnet_link_list links = mewnet_load_links(instance);
         expect(links.ok && links.count == 1 && links.items[0].id == info.id,
                "load links", "");
-        milib_unload_links(links);
+        mewnet_unload_links(links);
 
-        milib_link_destroy(vpn);
+        mewnet_link_destroy(vpn);
 
-        links = milib_load_links(instance);
+        links = mewnet_load_links(instance);
         expect(links.ok && links.count == 0, "load links after destroy", "");
-        milib_unload_links(links);
+        mewnet_unload_links(links);
     }
 
-    milib_close(instance);
+    mewnet_close(instance);
     printf("\n%s\n", failures == 0 ? "all C tests passed" : "C tests failed");
     return failures == 0 ? 0 : 1;
 }

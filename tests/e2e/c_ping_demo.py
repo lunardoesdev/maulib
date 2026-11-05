@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run tests/c/test_ping.c against a local Xray VLESS server.
 
-Builds nothing: expects dist/test_ping and dist/libmilib.so to exist.
+Builds nothing: expects dist/test_ping and dist/libmewnet.so to exist.
 """
 
 import os
@@ -23,7 +23,7 @@ def main():
         print(f"SKIP: {binary} not built (run: make test-c-ping)")
         return 2
 
-    workdir = tempfile.mkdtemp(prefix="milib-c-ping-")
+    workdir = tempfile.mkdtemp(prefix="mewnet-c-ping-")
     target, _ = target_204.start(0)
     target_port = target.server_address[1]
     url = f"http://127.0.0.1:{target_port}/204"

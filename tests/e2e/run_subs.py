@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end test for libmilib_subs + milib-subs CLI.
+"""End-to-end test for libmewnet_subs + mewnet-subs CLI.
 
 Starts a local Xray VLESS server and a local HTTP subscription server, then
 exercises streaming fetch, base64/plain parsing, testing, rating and SQLite.
@@ -17,7 +17,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-BIN = os.path.join(ROOT, "build", "subscriptions", "milib-subs")
+BIN = os.path.join(ROOT, "build", "libs", "mewnet-subs", "mewnet-subs")
 XRAY_BIN = os.environ.get("XRAY_BIN", "/tmp/opencode/xray/xray")
 
 sys.path.insert(0, HERE)
@@ -40,7 +40,7 @@ def check(name, condition, detail=""):
 def run(db, *args):
     env = os.environ.copy()
     env["LD_LIBRARY_PATH"] = os.pathsep.join(
-        [os.path.join(ROOT, "build", "subscriptions"), os.path.join(ROOT, "dist"),
+        [os.path.join(ROOT, "build", "libs", "mewnet-subs"), os.path.join(ROOT, "dist"),
          env.get("LD_LIBRARY_PATH", "")]
     )
     proc = subprocess.run(
@@ -73,15 +73,21 @@ def main():
         print(f"SKIP: Xray binary not found at {XRAY_BIN}")
         return 2
 
-    workdir = tempfile.mkdtemp(prefix="milib-subs-e2e-")
+    workdir = tempfile.mkdtemp(prefix="mewnet-subs-e2e-")
     target, _ = target_204.start(0)
     target_port = target.server_address[1]
     xray = start_xray(workdir, 0)
 
+    base_link = xray["link"].split("#", 1)[0]
+    live_link = base_link + "#xray-live"
+    renamed_link = base_link + "#xray-renamed"
+    changed_password = base_link.replace("@", "x@", 1) + "#xray-changed"
     plain = (
         "#profile-title: e2e-plain\n"
         "#profile-update-interval: 1\n"
-        f"{xray['link']}\n"
+        f"{live_link}\n"
+        f"{renamed_link}\n"
+        f"{changed_password}\n"
         "vless://11111111-2222-3333-4444-555555555555@127.0.0.1:1"
         "?encryption=none&security=none&type=tcp#dead-one\n"
     )
@@ -105,16 +111,23 @@ def main():
         conn = sqlite3.connect(db)
         conn.row_factory = sqlite3.Row
         proxies = conn.execute("SELECT COUNT(*) FROM proxies").fetchone()[0]
-        check("four configs parsed", proxies == 4, str(proxies))
+        check("duplicates deduped, password change kept", proxies == 3, str(proxies))
+        check("default group exists",
+              conn.execute("SELECT COUNT(*) FROM subscription_groups WHERE name='All'").fetchone()[0] == 1)
+        check("groups command", run(db, "groups").returncode == 0, "")
 
         xray_row = conn.execute(
-            "SELECT id, name FROM proxies WHERE link LIKE 'vless://%' AND name != 'dead-one' LIMIT 1"
+            "SELECT id, name FROM proxies WHERE name = 'xray-live' LIMIT 1"
         ).fetchone()
         dead_row = conn.execute(
             "SELECT id FROM proxies WHERE name = 'dead-one' LIMIT 1"
         ).fetchone()
         check("xray config stored", xray_row is not None, "")
         check("dead config stored", dead_row is not None, "")
+        changed_row = conn.execute(
+            "SELECT id FROM proxies WHERE name = 'xray-changed' LIMIT 1"
+        ).fetchone()
+        check("password change creates new config", changed_row is not None, "")
 
         manual_link = (
             "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@127.0.0.1:9"
