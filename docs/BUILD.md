@@ -84,6 +84,8 @@ make test-c          # C-заголовок и линковка
 make xray            # скачать Xray в /tmp/opencode/xray
 make test-e2e        # одиночный VLESS + mixed inbound
 make test-e2e-links  # 4 прокси, hot-swap, конкурентные пинги
+make test-c-ping-local                 # ping из C через локальный Xray
+make test-c-ping MILIB_TEST_VLESS='vless://...'  # ping из C через реальную ссылку
 ```
 
 ## Особенности

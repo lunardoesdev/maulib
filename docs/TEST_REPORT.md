@@ -87,6 +87,14 @@ all C tests passed
 
 Тест собран с `#include "milib.h"` и линкуется с `libmilib.so`.
 
+Отдельная проверка ping из C через локальный Xray:
+
+```
+$ make test-c-ping-local
+ping: {"delay":3,"link_id":1,"mode":"proxy","name":"xray-1",
+       "ok":true,"url":"http://127.0.0.1:38035/204"}
+```
+
 ## 4. Stress: 100 циклов add/remove
 
 Команда: `python3 tests/python/test_stress.py`

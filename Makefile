@@ -10,7 +10,7 @@ export CGO_ENABLED = 1
 
 LDFLAGS = -s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33
 
-.PHONY: all build test test-unit test-links test-stress test-c test-e2e test-e2e-links clean xray
+.PHONY: all build test test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
 
 all: build
 
@@ -33,6 +33,20 @@ test-stress: build
 test-c: build
 	$(CC) tests/c/test_api.c -Iinclude -Ldist -lmilib -Wl,-rpath,'$$ORIGIN' -o dist/test_api
 	./dist/test_api
+
+# Ping through the C ABI using a real link:
+#   make test-c-ping MILIB_TEST_VLESS='vless://...' [MILIB_PING_URL='http://.../204']
+test-c-ping: build
+	$(CC) tests/c/test_ping.c -Iinclude -Ldist -lmilib -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
+	@if [ -z "$(MILIB_TEST_VLESS)" ]; then \
+		echo "set MILIB_TEST_VLESS='vless://...'"; exit 2; \
+	fi
+	./dist/test_ping "$(MILIB_TEST_VLESS)" "$(MILIB_PING_URL)"
+
+# Same, but against a local Xray VLESS server (no real link needed).
+test-c-ping-local: build
+	$(CC) tests/c/test_ping.c -Iinclude -Ldist -lmilib -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
+	$(PYTHON) tests/e2e/c_ping_demo.py
 
 test-e2e: build
 	$(PYTHON) tests/e2e/run.py

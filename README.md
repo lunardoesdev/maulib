@@ -144,6 +144,8 @@ make test-stress     # 100 циклов add/remove, утечки FD/goroutine/RS
 make xray            # скачать Xray для e2e (в /tmp, не коммитится)
 make test-e2e        # локальный Xray + VLESS + mixed inbound
 make test-e2e-links  # 4 прокси, hot-swap, конкурентные пинги
+make test-c-ping-local                          # ping из C, локальный Xray
+make test-c-ping MILIB_TEST_VLESS='vless://...' # ping из C, реальная ссылка
 ```
 
 `test-e2e-links` — главный сценарий: Python создаёт 4 прокси через FFI,

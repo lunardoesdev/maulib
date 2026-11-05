@@ -171,6 +171,63 @@ curl --socks5-hostname 127.0.0.1:<link_port> \
 
 Per-link SOCKS5 поддерживает TCP. UDP не проксируется.
 
+## Как проверить ping из C
+
+Готовый пример — `tests/c/test_ping.c`. Сборка и запуск:
+
+```bash
+cc tests/c/test_ping.c -Iinclude -Ldist -lmilib \
+   -Wl,-rpath,'$ORIGIN' -o dist/test_ping
+
+./dist/test_ping 'vless://uuid@host:443?...#node' \
+                 'https://www.gstatic.com/generate_204'
+```
+
+Или через переменные окружения:
+
+```bash
+MILIB_TEST_VLESS='vless://...' ./dist/test_ping
+```
+
+Минимальный код:
+
+```c
+milib_handle h = 0;
+char* err = NULL;
+milib_init(NULL, NULL, "{\"mixed_port\":-1}", &h, &err);
+
+milib_link* link = milib_link_create(h, vless_link, NULL, &err);
+char* result = milib_link_ping(link,
+    "{\"url\":\"https://www.gstatic.com/generate_204\","
+    "\"timeout_ms\":5000,\"expected\":\"204\"}");
+
+puts(result);                 // {"ok":true,"delay":123,...}
+int ok = strstr(result, "\"ok\":true") != NULL;
+
+milib_free_string(result);
+milib_link_destroy(link);
+milib_shutdown(h);
+```
+
+`mixed_port: -1` отключает inbound: для ping он не нужен.
+
+Проверка без реальной ссылки (поднимает локальный Xray и target `204`):
+
+```bash
+make test-c-ping-local
+```
+
+Пример вывода:
+
+```
+link: {"ok":true,"link_id":1,"name":"xray-1","type":"VLESS",...}
+ping: {"ok":true,"link_id":1,"name":"xray-1","delay":3,
+       "url":"http://127.0.0.1:38035/204","mode":"proxy"}
+```
+
+`delay` — это время HTTP-запроса, реально прошедшего через VLESS-прокси,
+а не ICMP-пинг до сервера.
+
 ## Удаление
 
 ```c
