@@ -33,7 +33,7 @@ struct mewnet_agent {
     unsigned current_delay;
     bool ready;
 
-    int health_failures;
+    unsigned health_history;
     int64_t next_health_ms;
     int64_t next_discover_ms;
     int64_t last_pool_batch_ms;
@@ -278,6 +278,7 @@ static bool agent_route(mewnet_agent* agent, const mewnet_subs_proxy* proxy) {
     if (first) {
         agent_log(agent, "READY local=http://127.0.0.1:%d", agent->cfg.proxy_port);
     }
+    agent->health_history = 0;
     agent_emit_state(agent);
     return true;
 }
@@ -581,21 +582,25 @@ static void* agent_thread_main(void* data) {
         }
 
         if (now >= agent->next_health_ms) {
-            if (agent_health_check(agent)) {
-                agent->health_failures = 0;
+            bool healthy = agent_health_check(agent);
+            agent->health_history = ((agent->health_history << 1) | (healthy ? 0u : 1u)) & 0x1Fu;
+            unsigned recent_failures = 0;
+            for (unsigned bits = agent->health_history; bits != 0; bits >>= 1) {
+                recent_failures += bits & 1u;
+            }
+            if (healthy) {
                 agent->next_health_ms = now + (int64_t)agent->cfg.health_interval_sec * 1000;
             } else {
-                agent->health_failures++;
-                agent_log(agent, "HEALTH FAIL try=%d/%d", agent->health_failures, 2);
-                if (agent->health_failures >= 2) {
+                agent_log(agent, "HEALTH FAIL recent=%u/5", recent_failures);
+                if (recent_failures >= 3) {
                     agent_mark_current_dead(agent, "health check failed");
-                    agent->health_failures = 0;
+                    agent->health_history = 0;
                     if (!agent_switch_verified(agent)) {
                         agent_clear_current(agent);
                     }
                     agent->next_health_ms = now + 1500;
                 } else {
-                    agent->next_health_ms = now + 800;
+                    agent->next_health_ms = now + 1000;
                 }
             }
             agent_emit_state(agent);
