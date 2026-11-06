@@ -295,8 +295,8 @@ make subs-mingw
 Результат:
 
 ```text
-ready=1 ready_ms=6587
-curl_rc=0 total_ms=7275
+ready=1 ready_ms=3412
+curl_rc=0 total_ms=4085
 HTTP/1.1 200 Connection established
 HTTP/1.1 200 OK
 <TITLE>The Programming Language Lua
@@ -308,8 +308,8 @@ HTTP/1.1 200 OK
 DB /tmp/opencode/final-watch.db
 PROXY http://127.0.0.1:18085
 FETCH t=... id=1 status=200 added=7 updated=0 removed=0
-BATCH t=... tested=7 alive=3
-WORKING id=1 name=新西兰+V2CROSS.COM
+BATCH t=... tested=3 alive=1
+WORKING id=5 name=新西兰+V2CROSS.COM
 PROXY http://127.0.0.1:18085
 READY
 TEST t=... id=1 alive=1 delay=504 rating=1->1
@@ -318,9 +318,9 @@ TEST t=... id=5 alive=1 delay=641 rating=1->1
 
 Итог:
 
-- рабочий прокси найден за **6.587 с**;
+- рабочий прокси найден за **3.412 с**;
 - `curl https://lua.org` через `http://127.0.0.1:18085` завершился за
-  **7.275 с** от запуска;
+  **4.085 с** от запуска;
 - получен HTTP `200` и HTML `The Programming Language Lua`;
 - Xray не использовался;
 - после `READY` следующий rate-limited тест прошёл примерно через 20 с,

@@ -67,6 +67,17 @@ mewnet_batch_test_result mewnet_test_links_batch(mewnet_instance* instance,
                                                  size_t concurrency);
 void mewnet_unload_batch_test(mewnet_batch_test_result result);
 
+/*
+ * Same as mewnet_test_links_batch(), but cancels the remaining checks as soon
+ * as the first working link is found. Cancelled items have error CANCELLED and
+ * must not be treated as tested.
+ */
+mewnet_batch_test_result mewnet_test_links_batch_first(mewnet_instance* instance,
+                                                      const char* const* links,
+                                                      size_t count,
+                                                      const mewnet_delay_options* options,
+                                                      size_t concurrency);
+
 /* SharedVPNLink. */
 mewnet_link_options mewnet_link_options_default(void);
 mewnet_link_result mewnet_link_create(mewnet_instance* instance,

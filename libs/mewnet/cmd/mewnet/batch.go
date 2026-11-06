@@ -6,6 +6,7 @@ package main
 import "C"
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"unsafe"
@@ -15,6 +16,15 @@ import (
 
 //export mewnet_test_links_batch
 func mewnet_test_links_batch(instance *C.mewnet_instance, links **C.char, count C.size_t, options *C.mewnet_delay_options, concurrency C.size_t) (out C.mewnet_batch_test_result) {
+	return testLinksBatch(instance, links, count, options, concurrency, false)
+}
+
+//export mewnet_test_links_batch_first
+func mewnet_test_links_batch_first(instance *C.mewnet_instance, links **C.char, count C.size_t, options *C.mewnet_delay_options, concurrency C.size_t) (out C.mewnet_batch_test_result) {
+	return testLinksBatch(instance, links, count, options, concurrency, true)
+}
+
+func testLinksBatch(instance *C.mewnet_instance, links **C.char, count C.size_t, options *C.mewnet_delay_options, concurrency C.size_t, stopOnSuccess bool) (out C.mewnet_batch_test_result) {
 	defer func() {
 		if r := recover(); r != nil {
 			out = C.mewnet_batch_test_result{}
@@ -60,15 +70,41 @@ func mewnet_test_links_batch(instance *C.mewnet_instance, links **C.char, count 
 		workers = 256
 	}
 
+	ctx := context.Background()
+	cancel := func() {}
+	if stopOnSuccess {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	defer cancel()
+
 	slice := unsafe.Slice(items, n)
 	jobs := make(chan int)
 	var wg sync.WaitGroup
+	var foundMu sync.Mutex
+	found := false
+
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
-				testOneLink(c, linksGo[index], opts, &slice[index])
+				if stopOnSuccess {
+					select {
+					case <-ctx.Done():
+						failLinkTestResult(&slice[index], context.Canceled)
+						continue
+					default:
+					}
+				}
+				testOneLinkContext(c, ctx, linksGo[index], opts, &slice[index])
+				if stopOnSuccess && bool(slice[index].ok) {
+					foundMu.Lock()
+					if !found {
+						found = true
+						cancel()
+					}
+					foundMu.Unlock()
+				}
 			}
 		}()
 	}
@@ -85,13 +121,13 @@ func mewnet_test_links_batch(instance *C.mewnet_instance, links **C.char, count 
 	return out
 }
 
-func testOneLink(c *core.Core, link string, opts core.DelayOptions, dst *C.mewnet_link_test_result) {
+func testOneLinkContext(c *core.Core, ctx context.Context, link string, opts core.DelayOptions, dst *C.mewnet_link_test_result) {
 	defer func() {
 		if r := recover(); r != nil {
 			failLinkTestResult(dst, fmt.Errorf("panic: %v", r))
 		}
 	}()
-	result, err := c.TestLink(link, opts)
+	result, err := c.TestLinkContext(ctx, link, opts)
 	if err != nil {
 		failLinkTestResult(dst, err)
 		return

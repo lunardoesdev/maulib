@@ -126,7 +126,7 @@ mewnet_subs_batch_test_result mewnet_subs_test_batch(mewnet_subs* db, mewnet_ins
     options.timeout_ms = db->test_timeout_ms;
     options.expected = db->test_expected;
 
-    mewnet_batch_test_result tested = mewnet_test_links_batch(
+    mewnet_batch_test_result tested = mewnet_test_links_batch_first(
         milib, (const char* const*)links, count, &options, concurrency);
     if (!tested.ok) {
         result.error = tested.error;
@@ -138,6 +138,9 @@ mewnet_subs_batch_test_result mewnet_subs_test_batch(mewnet_subs* db, mewnet_ins
 
     for (size_t i = 0; i < count && i < tested.count; i++) {
         mewnet_link_test_result* item = &tested.items[i];
+        if (item->error.code == MEWNET_ERROR_CANCELLED) {
+            continue;
+        }
         mewnet_subs_test_result record = mewnet_subs_record_test(
             db, ids[i], item->ok, item->delay_ms, item->ok ? "" : item->error.message);
         if (record.error.code != MEWNET_ERROR_NONE && result.error.code == MEWNET_ERROR_NONE) {

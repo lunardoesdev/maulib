@@ -103,6 +103,11 @@ func (c *Core) testDelayWithContext(ctx context.Context, name string, opts Delay
 // TestLink parses a share link, creates a temporary proxy, measures its delay
 // and closes it without touching the active configuration.
 func (c *Core) TestLink(link string, opts DelayOptions) (*DelayResult, error) {
+	return c.TestLinkContext(context.Background(), link, opts)
+}
+
+// TestLinkContext is TestLink with a caller-supplied cancellation context.
+func (c *Core) TestLinkContext(ctx context.Context, link string, opts DelayOptions) (*DelayResult, error) {
 	resolved, err := opts.resolve()
 	if err != nil {
 		return nil, err
@@ -126,10 +131,10 @@ func (c *Core) TestLink(link string, opts DelayOptions) (*DelayResult, error) {
 	}
 	defer proxy.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), resolved.timeout)
+	testCtx, cancel := context.WithTimeout(ctx, resolved.timeout)
 	defer cancel()
 
-	delay, err := safeURLTest(ctx, proxy, resolved.url, resolved.expected)
+	delay, err := safeURLTest(testCtx, proxy, resolved.url, resolved.expected)
 	if err != nil {
 		return nil, err
 	}

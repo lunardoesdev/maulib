@@ -257,9 +257,11 @@ mewnet_http_stream
 
 Библиотечные API для этого:
 
-- `mewnet_test_links_batch` / `mewnet_unload_batch_test` в `libmewnet`;
+- `mewnet_test_links_batch` / `mewnet_test_links_batch_first` /
+  `mewnet_unload_batch_test` в `libmewnet`;
 - `mewnet_subs_test_batch` — выбрать непроверенные, проверить пачкой,
-  записать результаты и вернуть первый alive;
+  остановиться на первом alive (остальные проверки отменяются), записать
+  результаты и вернуть первый alive;
 - `mewnet_subs_count_untested`, `mewnet_subs_count_alive`,
   `mewnet_subs_first_alive`;
 - `mewnet_subs_fetch_now` — fetch без ожидания rate limiter для аварийного
