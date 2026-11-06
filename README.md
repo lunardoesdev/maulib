@@ -305,7 +305,20 @@ make gui
 
 Подробности — в [`gui/README.md`](gui/README.md).
 
-## API
+## Go API
+
+Ядро можно импортировать из Go без cgo:
+
+```go
+import "mewnet"
+
+client, _ := mewnet.Start(mewnet.Config{MixedPort: -1})
+defer client.Close()
+```
+
+Подробности — в [`libs/mewnet/README.md`](libs/mewnet/README.md).
+
+## C API
 
 Полное описание — в [`libs/mewnet/cmd/mewnet/mewnet.h`](libs/mewnet/cmd/mewnet/mewnet.h).
 

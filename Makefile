@@ -49,7 +49,7 @@ subs-mingw: build-mingw-core
 test: test-unit test-links test-c test-subs test-e2e test-e2e-subs test-e2e-links
 
 test-unit: build
-	cd libs/mewnet && $(GO) test ./internal/...
+	cd libs/mewnet && $(GO) test ./...
 	$(PYTHON) tests/python/test_api.py
 
 test-links: build
