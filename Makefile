@@ -19,7 +19,7 @@ export CGO_ENABLED = 1
 
 LDFLAGS = -s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33
 
-.PHONY: all deps build build-mingw-core subs subs-mingw gui watch test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
+.PHONY: all deps build build-mingw-core subs subs-mingw gui gtk watch test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links test-gtk-agent clean xray
 
 all: build
 
@@ -42,6 +42,7 @@ subs-mingw: build-mingw-core
 		-DCMAKE_TOOLCHAIN_FILE=$(CURDIR)/cmake/toolchains/mingw-x86_64.cmake \
 		-DCMAKE_BUILD_TYPE=Release \
 		-DMEWNET_SUBS_BUILD_TESTS=OFF \
+		-DMEWNET_BUILD_GTK=OFF \
 		-DMEWNET_LIBRARY=$(CURDIR)/dist/windows/libmewnet.dll.a
 	$(MISE) exec -- cmake --build build-mingw -j$(shell nproc)
 
@@ -71,6 +72,15 @@ WATCH_SUBS ?= https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
 
 watch: subs
 	./build/apps/mewnet-watch/mewnet-watch --db $(WATCH_DB) --proxy-port 18085 $(WATCH_SUBS)
+
+GTK_DB ?= data/mewnet-gtk.db
+
+gtk: subs
+	./build/apps/mewnet-gtk/mewnet-gtk --db $(GTK_DB)
+
+# Offline failover/recovery test for the GTK discovery engine.
+test-gtk-agent: subs
+	$(PYTHON) tests/e2e/run_gtk_agent.py
 
 gui: subs
 	mkdir -p build/gui/syslib

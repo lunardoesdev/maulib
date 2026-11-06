@@ -201,6 +201,13 @@ MEWNET_SUBS_API mewnet_error mewnet_subs_count_alive(mewnet_subs* db, int64_t gr
                                                      int64_t* out_count);
 MEWNET_SUBS_API mewnet_error mewnet_subs_first_alive(mewnet_subs* db, int64_t group_id,
                                                      mewnet_subs_proxy* out);
+/*
+ * Pick the next alive proxy after `exclude_id` (wrapping around).
+ * Pass exclude_id = 0 to start from the lowest id.
+ */
+MEWNET_SUBS_API mewnet_error mewnet_subs_next_alive(mewnet_subs* db, int64_t group_id,
+                                                    int64_t exclude_id,
+                                                    mewnet_subs_proxy* out);
 
 /* Testing and rating. */
 typedef struct mewnet_subs_test_result {
@@ -220,6 +227,21 @@ typedef struct mewnet_subs_test_result {
 
 MEWNET_SUBS_API mewnet_subs_test_result mewnet_subs_test_next(mewnet_subs* db,
                                                            mewnet_instance* mewnet);
+/* Same as mewnet_subs_test_next(), but skips the blocking rate limiter.
+ * The caller is responsible for pacing. */
+MEWNET_SUBS_API mewnet_subs_test_result mewnet_subs_test_next_now(mewnet_subs* db,
+                                                               mewnet_instance* mewnet);
+
+typedef enum mewnet_subs_candidate_scope {
+    MEWNET_SUBS_CANDIDATE_ANY = 0,
+    MEWNET_SUBS_CANDIDATE_UNTESTED = 1,
+    MEWNET_SUBS_CANDIDATE_NOT_ALIVE = 2
+} mewnet_subs_candidate_scope;
+
+/* Test one weighted-random candidate in the requested scope without waiting
+ * on the shared rate limiter. Used by the GUI to grow the working pool. */
+MEWNET_SUBS_API mewnet_subs_test_result mewnet_subs_test_candidate_now(
+    mewnet_subs* db, mewnet_instance* mewnet, mewnet_subs_candidate_scope scope);
 MEWNET_SUBS_API mewnet_subs_test_result mewnet_subs_test_proxy(mewnet_subs* db,
                                                             mewnet_instance* mewnet,
                                                             int64_t proxy_id);

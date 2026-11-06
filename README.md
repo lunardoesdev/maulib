@@ -29,6 +29,7 @@ C-ABI (`c-shared`) обёртка над ядром [mihomo](https://github.com/
 libs/mewnet/       Go-ядро, c-shared libmewnet
 libs/mewnet-subs/  C/CMake библиотека libmewnet_subs + CLI
 apps/gui/          Odin + raylib GUI
+apps/mewnet-gtk/   C + GTK4 control panel
 third_party/       SQLite amalgamation
 tests/             C, Python, e2e
 docs/
@@ -250,6 +251,34 @@ make subs
 
 Подробности — в [`apps/mewnet-watch/README.md`](apps/mewnet-watch/README.md).
 
+## GTK4 control panel: `mewnet-gtk`
+
+```bash
+make gtk
+# или
+./build/apps/mewnet-gtk/mewnet-gtk --db data/mewnet-gtk.db --proxy-port 18085 \
+  https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
+```
+
+Окно умеет добавлять/удалять подписки, менять активный прокси, показывает
+текущий узел и журнал discovery. Локальный прокси слушает
+`http://127.0.0.1:<port>`; адрес виден в верхней панели.
+
+Надёжность: активный узел health-check'ается каждые 6 с, после двух отказов
+происходит автоматический failover; живые узлы не перепроверяются; пул
+держится до 4 прокси; при полном отказе discovery снова становится
+агрессивным и тянет следующую подписку. При закрытии окна прокси
+останавливается.
+
+Подробности — в [`apps/mewnet-gtk/README.md`](apps/mewnet-gtk/README.md) и
+[`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md).
+
+Автотест отказоустойчивости (офлайн, локальные прокси):
+
+```bash
+make test-gtk-agent
+```
+
 ## GUI на Odin
 
 Есть простая raylib-программа:
@@ -293,6 +322,7 @@ make test-stress     # 100 циклов add/remove, утечки FD/goroutine/RS
 make xray            # скачать Xray для e2e (в /tmp, не коммитится)
 make test-e2e        # локальный Xray + VLESS + mixed inbound
 make test-e2e-links  # 4 прокси, hot-swap, конкурентные пинги
+make test-gtk-agent  # офлайн failover/recovery тест GTK-движка
 make test-c-ping-local                          # ping из C, локальный Xray
 make test-c-ping MEWNET_TEST_VLESS='vless://...' # ping из C, реальная ссылка
 ```

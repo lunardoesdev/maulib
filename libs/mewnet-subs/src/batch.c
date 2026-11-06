@@ -52,14 +52,16 @@ mewnet_subs_batch_test_result mewnet_subs_test_batch(mewnet_subs* db, mewnet_ins
     if (subs_db_prepare(db->db, &stmt,
                         "SELECT q.id, q.link FROM ("
                         " SELECT p.id AS id, p.link AS link, p.rating AS rating,"
+                        " p.last_tested_at AS last_tested_at,"
                         " MAX(COALESCE(s.priority,0)) AS source_priority"
                         " FROM proxies p"
                         " LEFT JOIN proxy_sources ps ON ps.proxy_id=p.id"
                         " LEFT JOIN subscriptions s ON s.id=ps.subscription_id"
-                        " WHERE p.group_id=? AND p.last_tested_at IS NULL"
+                        " WHERE p.group_id=? AND (p.last_tested_at IS NULL OR p.alive=0)"
                         " GROUP BY p.id"
                         ") q"
-                        " ORDER BY pow("
+                        " ORDER BY CASE WHEN q.last_tested_at IS NULL THEN 0 ELSE 1 END,"
+                        " pow("
                         " ((random() & 9223372036854775807) / 9223372036854775807.0),"
                         " 1.0 / (1.0 + max(0, q.source_priority) + max(0, q.rating + 10))"
                         " ) DESC LIMIT ?",
@@ -239,6 +241,42 @@ mewnet_error mewnet_subs_first_alive(mewnet_subs* db, int64_t group_id,
             return subs_make_error(MEWNET_ERROR_NOT_FOUND, "no alive proxy found");
         }
         return subs_db_error(db->db, "select first alive proxy");
+    }
+    int64_t id = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    return mewnet_subs_get_proxy(db, id, out);
+}
+
+mewnet_error mewnet_subs_next_alive(mewnet_subs* db, int64_t group_id,
+                                    int64_t exclude_id, mewnet_subs_proxy* out) {
+    if (db == NULL || out == NULL) {
+        return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db and out are required");
+    }
+    memset(out, 0, sizeof(*out));
+    if (exclude_id == 0) {
+        return mewnet_subs_first_alive(db, group_id, out);
+    }
+    sqlite3_stmt* stmt = NULL;
+    mewnet_error err;
+    subs_clear_error(&err);
+    const char* sql =
+        "SELECT id FROM proxies"
+        " WHERE alive=1 AND (?=0 OR group_id=?) AND id<>?"
+        " ORDER BY CASE WHEN id>? THEN 0 ELSE 1 END, id ASC LIMIT 1";
+    if (subs_db_prepare(db->db, &stmt, sql, &err) != 0) {
+        return err;
+    }
+    sqlite3_bind_int64(stmt, 1, group_id);
+    sqlite3_bind_int64(stmt, 2, group_id);
+    sqlite3_bind_int64(stmt, 3, exclude_id);
+    sqlite3_bind_int64(stmt, 4, exclude_id);
+    int rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        if (rc == SQLITE_DONE) {
+            return subs_make_error(MEWNET_ERROR_NOT_FOUND, "no other alive proxy found");
+        }
+        return subs_db_error(db->db, "select next alive proxy");
     }
     int64_t id = sqlite3_column_int64(stmt, 0);
     sqlite3_finalize(stmt);

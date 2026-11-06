@@ -74,6 +74,20 @@ int main(void) {
     mewnet_subs_proxy first_alive;
     check(mewnet_subs_first_alive(db, group_id, &first_alive).code == MEWNET_ERROR_NONE &&
           first_alive.id == proxy_id, "first alive");
+    mewnet_subs_proxy next;
+    check(mewnet_subs_next_alive(db, group_id, proxy_id, &next).code == MEWNET_ERROR_NOT_FOUND,
+          "next alive empty");
+    err = mewnet_subs_add_proxy(db, group_id,
+        "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@127.0.0.1:8?encryption=none&security=none&type=tcp#temp");
+    check(err.code == MEWNET_ERROR_NONE, "add temp");
+    int temp_id = query_int(raw, "SELECT id FROM proxies WHERE name='temp' LIMIT 1");
+    r = mewnet_subs_record_test(db, temp_id, true, 55, "");
+    check(r.error.code == MEWNET_ERROR_NONE && r.alive, "temp alive");
+    check(mewnet_subs_next_alive(db, group_id, proxy_id, &next).code == MEWNET_ERROR_NONE &&
+          next.id == temp_id, "next alive after current");
+    check(mewnet_subs_next_alive(db, group_id, temp_id, &next).code == MEWNET_ERROR_NONE &&
+          next.id == proxy_id, "next alive wraps");
+    check(mewnet_subs_remove_proxy(db, temp_id).code == MEWNET_ERROR_NONE, "remove temp");
     r = mewnet_subs_record_test(db, proxy_id, true, 43, "");
     check(r.error.code == MEWNET_ERROR_NONE && r.rating_delta == 0 && r.rating_after == 1, "rating +1 daily cap");
     r = mewnet_subs_record_test(db, proxy_id, false, 0, "boom");

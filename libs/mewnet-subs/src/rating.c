@@ -4,27 +4,42 @@
 #include <stdlib.h>
 #include <string.h>
 
-static int select_candidate(mewnet_subs* db, int64_t* proxy_id, char* link, size_t link_size,
+static const char* candidate_filter(mewnet_subs_candidate_scope scope) {
+    switch (scope) {
+    case MEWNET_SUBS_CANDIDATE_UNTESTED:
+        return " AND p.last_tested_at IS NULL";
+    case MEWNET_SUBS_CANDIDATE_NOT_ALIVE:
+        return " AND p.alive=0";
+    case MEWNET_SUBS_CANDIDATE_ANY:
+    default:
+        return "";
+    }
+}
+
+static int select_candidate(mewnet_subs* db, mewnet_subs_candidate_scope scope,
+                            int64_t* proxy_id, char* link, size_t link_size,
                             mewnet_error* err) {
+    char sql[1024];
+    snprintf(sql, sizeof(sql),
+             "SELECT q.id, q.link FROM ("
+             " SELECT p.id AS id, p.link AS link, p.rating AS rating,"
+             " g.priority AS group_priority,"
+             " MAX(COALESCE(s.priority,0)) AS source_priority"
+             " FROM proxies p"
+             " JOIN subscription_groups g ON g.id=p.group_id"
+             " LEFT JOIN proxy_sources ps ON ps.proxy_id=p.id"
+             " LEFT JOIN subscriptions s ON s.id=ps.subscription_id"
+             " WHERE g.enabled=1%s"
+             " GROUP BY p.id"
+             ") q"
+             " ORDER BY pow("
+             " ((random() & 9223372036854775807) / 9223372036854775807.0),"
+             " 1.0 / (1.0 + max(0, q.group_priority)"
+             " + max(0, q.source_priority) + max(0, q.rating + 10))"
+             " ) DESC LIMIT 1",
+             candidate_filter(scope));
     sqlite3_stmt* stmt = NULL;
-    if (subs_db_prepare(db->db, &stmt,
-                        "SELECT q.id, q.link FROM ("
-                        " SELECT p.id AS id, p.link AS link, p.rating AS rating,"
-                        " g.priority AS group_priority,"
-                        " MAX(COALESCE(s.priority,0)) AS source_priority"
-                        " FROM proxies p"
-                        " JOIN subscription_groups g ON g.id=p.group_id"
-                        " LEFT JOIN proxy_sources ps ON ps.proxy_id=p.id"
-                        " LEFT JOIN subscriptions s ON s.id=ps.subscription_id"
-                        " WHERE g.enabled=1"
-                        " GROUP BY p.id"
-                        ") q"
-                        " ORDER BY pow("
-                        " ((random() & 9223372036854775807) / 9223372036854775807.0),"
-                        " 1.0 / (1.0 + max(0, q.group_priority)"
-                        " + max(0, q.source_priority) + max(0, q.rating + 10))"
-                        " ) DESC LIMIT 1",
-                        err) != 0) {
+    if (subs_db_prepare(db->db, &stmt, sql, err) != 0) {
         return -1;
     }
     int rc = sqlite3_step(stmt);
@@ -289,7 +304,9 @@ mewnet_subs_test_result mewnet_subs_test_proxy(mewnet_subs* db, mewnet_instance*
     return test_link(db, mewnet, proxy_id, link);
 }
 
-mewnet_subs_test_result mewnet_subs_test_next(mewnet_subs* db, mewnet_instance* mewnet) {
+static mewnet_subs_test_result test_next_impl(mewnet_subs* db, mewnet_instance* mewnet,
+                                              bool wait_for_rate_limit,
+                                              mewnet_subs_candidate_scope scope) {
     mewnet_subs_test_result result;
     memset(&result, 0, sizeof(result));
     if (db == NULL) {
@@ -297,18 +314,33 @@ mewnet_subs_test_result mewnet_subs_test_next(mewnet_subs* db, mewnet_instance* 
         return result;
     }
 
-    result.error = mewnet_subs_rate_limit_wait(db);
-    if (result.error.code != MEWNET_ERROR_NONE) {
-        return result;
+    if (wait_for_rate_limit) {
+        result.error = mewnet_subs_rate_limit_wait(db);
+        if (result.error.code != MEWNET_ERROR_NONE) {
+            return result;
+        }
     }
 
     int64_t proxy_id = 0;
     char link[MEWNET_LINK_MAX];
     mewnet_error err;
     subs_clear_error(&err);
-    if (select_candidate(db, &proxy_id, link, sizeof(link), &err) != 0) {
+    if (select_candidate(db, scope, &proxy_id, link, sizeof(link), &err) != 0) {
         result.error = err;
         return result;
     }
     return test_link(db, mewnet, proxy_id, link);
+}
+
+mewnet_subs_test_result mewnet_subs_test_next(mewnet_subs* db, mewnet_instance* mewnet) {
+    return test_next_impl(db, mewnet, true, MEWNET_SUBS_CANDIDATE_ANY);
+}
+
+mewnet_subs_test_result mewnet_subs_test_next_now(mewnet_subs* db, mewnet_instance* mewnet) {
+    return test_next_impl(db, mewnet, false, MEWNET_SUBS_CANDIDATE_ANY);
+}
+
+mewnet_subs_test_result mewnet_subs_test_candidate_now(mewnet_subs* db, mewnet_instance* mewnet,
+                                                       mewnet_subs_candidate_scope scope) {
+    return test_next_impl(db, mewnet, false, scope);
 }

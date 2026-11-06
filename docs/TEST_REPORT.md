@@ -331,3 +331,115 @@ TEST t=... id=5 alive=1 delay=641 rating=1->1
 ```text
 build-mingw/apps/mewnet-watch/mewnet-watch.exe
 ```
+
+## 12. GTK4 control panel `mewnet-gtk`
+
+Сборка:
+
+```bash
+make subs   # собирает mewnet-gtk, если найден gtk4.pc
+```
+
+Запуск на чистой базе, одна публичная подписка, без Xray:
+
+```bash
+./build/apps/mewnet-gtk/mewnet-gtk \
+  --db /tmp/opencode/gtk-fresh.db \
+  --proxy-port 18097 \
+  --batch 70 --concurrency 70 --timeout 3000 \
+  https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
+```
+
+Результат:
+
+```text
+ready_ms=3940
+curl_rc=0 total_ms=5237
+<TITLE>The Programming Language Lua
+```
+
+Лог окна:
+
+```text
+DB /tmp/opencode/gtk-fresh.db
+PROXY http://127.0.0.1:18097
+batch=70 concurrency=70 fetch_interval=3600s slow_interval=24s
+DISCOVERY start batch=70 concurrency=70 timeout=3000ms
+FETCH id=1 status=200 added=7 updated=0 removed=0
+SUBS n=1
+BATCH tested=3 alive=1
+ACTIVE id=2 name=新西兰+V2CROSS.COM delay=1366
+READY local=http://127.0.0.1:18097
+```
+
+Проверено:
+
+- при пустой базе окно пишет `WAIT подписок нет — добавьте URL в окне` и
+  ждёт; после добавления/запуска с URL сразу качает подписку и активирует
+  найденный узел;
+- при существующей базе с alive-узлом прокси активируется сразу при старте;
+- кнопка «Сменить прокси» переключает на следующий живой узел:
+  ```text
+  SWITCH requested
+  ACTIVE id=5 name=新西兰+V2CROSS.COM delay=2814
+  SWITCH id=5 name=新西兰+V2CROSS.COM
+  ```
+- после `READY` discovery не трогает живые узлы и добирает пул: при пуле
+  меньше 4 живых шаг около 2 с, при полном — 24 с;
+  ```text
+  TEST id=5 alive=1 delay=770 rating=1->1
+  TEST id=5 alive=1 delay=2814 rating=1->1
+  ```
+- `--proxy-port 0` выбирает свободный порт и показывает его в окне:
+  `PROXY http://127.0.0.1:36617`;
+- при закрытии окна/SIGTERM процесс завершает discovery и Mihomo, порт больше
+  не слушается.
+
+### 12.1. Автоматическая проверка отказоустойчивости
+
+```bash
+make test-gtk-agent
+```
+
+Тест офлайновый: локальный `204` origin, три локальных HTTP-прокси, подписка
+на них, запуск `mewnet-gtk --headless`. Результат:
+
+```text
+PASS  bootstrap: READY
+PASS  bootstrap: local proxy port
+PASS  bootstrap: traffic through proxy
+PASS  pool: grew to two working proxies
+PASS  switch: moved to another proxy
+PASS  switch: traffic still works
+PASS  failover: active proxy identified
+PASS  failover: health check detected dead proxy
+PASS  failover: switched to another proxy
+PASS  failover: traffic works after switch
+PASS  exhausted: aggressive discovery started
+PASS  exhausted: process still alive
+PASS  recovery: active proxy selected again
+PASS  recovery: traffic works again
+PASS  wait: empty database waits
+PASS  wait: subscription inserted
+PASS  wait: fetched and activated
+PASS  wait: traffic works
+
+18 passed, 0 failed
+```
+
+Проверены: bootstrap, рост пула, ручное переключение, health-check и
+автоматический failover, полный отказ всех прокси, возврат нового узла,
+а также сценарий «пустая база → подписка появилась → автоматический запуск».
+Спецификация и матрица отказов — в
+[`docs/GTK_RELIABILITY.md`](GTK_RELIABILITY.md).
+
+Память UI проверена на базах с 7 и 4226 прокси: RSS ~186 МБ и ~190 МБ
+соответственно, то есть разница около 4 МБ.
+
+UI smoke без ручных кликов:
+
+```bash
+./build/apps/mewnet-gtk/mewnet-gtk --db /tmp/ui.db --screenshot /tmp/ui.png
+```
+
+Окно отрисовывается в PNG и приложение завершается.
