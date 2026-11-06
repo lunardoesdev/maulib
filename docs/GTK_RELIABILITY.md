@@ -43,7 +43,7 @@ FAST_DISCOVERY  (alive == 0)
     -> не найден: emergency fetch следующей подписки, повторить
 
 HEALTHY  (alive > 0)
-  health check активного каждые 6 с (3 отказа из 5 -> failover)
+  health check активного каждые 6 с (2 отказа из 3 -> failover)
   slow discovery: 1 кандидат за шаг
     pool < 4  -> шаг 2 с
     pool >= 4 -> шаг 24 с
@@ -66,7 +66,7 @@ FAILOVER
 | `--pool-target` | 4 | сколько живых держать про запас |
 | `--health-interval` | 6 с | период проверки активного |
 | `--health-timeout` | 2500 мс | таймаут health-check |
-| отказов до failover | 3 из 5 | защита от ложного срабатывания и от «мигающих» узлов |
+| отказов до failover | 2 из 3 | защита от ложного срабатывания и от «мигающих» узлов |
 | `--slow-interval` | 24 с | шаг discovery, когда pool полон |
 | шаг при pool < target | 2 с | быстрый рост запаса |
 | `--fetch-interval` | 3600 с | обычное обновление подписки |

@@ -352,8 +352,12 @@ static bool agent_switch_verified(mewnet_agent* agent) {
     int64_t exclude = current_id;
     for (int64_t attempt = 0; attempt < alive; attempt++) {
         mewnet_subs_proxy proxy;
-        mewnet_error err = mewnet_subs_next_alive(agent->cfg.db, agent->cfg.group_id,
-                                                  exclude, &proxy);
+        mewnet_error err = mewnet_subs_random_best_alive(
+            agent->cfg.db, agent->cfg.group_id, exclude, 0, 5, &proxy);
+        if (err.code == MEWNET_ERROR_NOT_FOUND && exclude != 0) {
+            err = mewnet_subs_random_best_alive(
+                agent->cfg.db, agent->cfg.group_id, exclude, 0, 5, &proxy);
+        }
         if (err.code == MEWNET_ERROR_NOT_FOUND) {
             break;
         }
@@ -646,7 +650,7 @@ static void* agent_thread_main(void* data) {
 
         if (now >= agent->next_health_ms) {
             bool healthy = agent_health_check(agent);
-            agent->health_history = ((agent->health_history << 1) | (healthy ? 0u : 1u)) & 0x1Fu;
+            agent->health_history = ((agent->health_history << 1) | (healthy ? 0u : 1u)) & 0x07u;
             unsigned recent_failures = 0;
             for (unsigned bits = agent->health_history; bits != 0; bits >>= 1) {
                 recent_failures += bits & 1u;
@@ -654,8 +658,8 @@ static void* agent_thread_main(void* data) {
             if (healthy) {
                 agent->next_health_ms = now + (int64_t)agent->cfg.health_interval_sec * 1000;
             } else {
-                agent_log(agent, "HEALTH FAIL recent=%u/5", recent_failures);
-                if (recent_failures >= 3) {
+                agent_log(agent, "HEALTH FAIL recent=%u/3", recent_failures);
+                if (recent_failures >= 2) {
                     agent_mark_current_dead(agent, "health check failed");
                     agent->health_history = 0;
                     if (!agent_switch_verified(agent)) {
@@ -721,7 +725,7 @@ mewnet_agent* mewnet_agent_start(const mewnet_agent_config* config,
                                        ? config->slow_interval_sec : 24;
     snprintf(agent->health_url, sizeof(agent->health_url), "%s",
              config->health_url != NULL ? config->health_url
-                                        : "https://lua.org");
+                                        : "https://www.gstatic.com/generate_204");
     snprintf(agent->health_expected, sizeof(agent->health_expected), "%s",
              config->health_expected != NULL ? config->health_expected : "204");
     agent->callbacks = callbacks;

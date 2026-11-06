@@ -225,7 +225,10 @@ mewnet_error mewnet_subs_first_alive(mewnet_subs* db, int64_t group_id,
     subs_clear_error(&err);
     const char* sql =
         "SELECT id FROM proxies WHERE alive=1 AND (?=0 OR group_id=?)"
-        " ORDER BY rating DESC, last_tested_at DESC, id ASC LIMIT 1";
+        " ORDER BY rating DESC,"
+        " CASE WHEN last_delay_ms IS NULL OR last_delay_ms<=0"
+        "      THEN 2147483647 ELSE last_delay_ms END ASC,"
+        " last_tested_at DESC, id ASC LIMIT 1";
     if (subs_db_prepare(db->db, &stmt, sql, &err) != 0) {
         return err;
     }

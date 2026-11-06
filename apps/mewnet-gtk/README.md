@@ -34,7 +34,7 @@ GTK4 development files are required (`gtk4.pc`). If GTK4 is not installed,
 - While there is no working node, untested/dead nodes are checked in batches
   of 70 with first-success cancellation.
 - Once a node works, it is selected automatically.
-- The active node is health-checked every 6 seconds with a real GET through the local mixed proxy; three failures in the last five checks
+- The active node is health-checked every 6 seconds with a real GET through the local mixed proxy; two failures in the last three checks
   mark it dead and fail over to the next verified node.
 - Discovery never retests healthy nodes. It prefers untested nodes, then dead
   ones, and grows a pool of up to `--pool-target` verified proxies.
