@@ -39,6 +39,8 @@ typedef struct mewnet_subs_open_result {
 
 MEWNET_SUBS_API mewnet_subs_open_result mewnet_subs_open(const mewnet_subs_config* config);
 MEWNET_SUBS_API void mewnet_subs_close(mewnet_subs* db);
+/* A second connection with the same configuration (for a fetch worker). */
+MEWNET_SUBS_API mewnet_subs* mewnet_subs_clone(mewnet_subs* db);
 
 /* Subscription groups. */
 typedef struct mewnet_subs_group {
@@ -102,7 +104,17 @@ typedef struct mewnet_subscription_list {
 
 MEWNET_SUBS_API mewnet_subscription_list mewnet_subs_load_subscriptions(mewnet_subs* db);
 MEWNET_SUBS_API mewnet_subscription_list mewnet_subs_load_subscriptions_in_group(mewnet_subs* db, int64_t group_id);
+/* Bounded page; use for UIs that must not load millions of rows. */
+MEWNET_SUBS_API mewnet_subscription_list mewnet_subs_load_subscriptions_page(
+    mewnet_subs* db, int64_t group_id, size_t limit, size_t offset);
 MEWNET_SUBS_API void mewnet_subs_unload_subscriptions(mewnet_subscription_list list);
+MEWNET_SUBS_API mewnet_error mewnet_subs_count_subscriptions(mewnet_subs* db, int64_t group_id,
+                                                             int64_t* out_count);
+MEWNET_SUBS_API mewnet_error mewnet_subs_max_last_fetch(mewnet_subs* db, int64_t group_id,
+                                                        int64_t* out_value);
+MEWNET_SUBS_API mewnet_error mewnet_subs_next_subscription_id(mewnet_subs* db, int64_t group_id,
+                                                              bool unfetched_only,
+                                                              int64_t* out_id);
 
 /* Proxies. */
 typedef struct mewnet_subs_proxy {
@@ -180,6 +192,8 @@ typedef struct mewnet_subs_fetch_result {
 MEWNET_SUBS_API mewnet_subs_fetch_result mewnet_subs_fetch(mewnet_subs* db, int64_t subscription_id);
 /* Fetch without waiting for the shared request limiter (discovery fallback). */
 MEWNET_SUBS_API mewnet_subs_fetch_result mewnet_subs_fetch_now(mewnet_subs* db, int64_t subscription_id);
+/* Ask an in-flight fetch to abort (safe from another thread). */
+MEWNET_SUBS_API void mewnet_subs_cancel_fetch(mewnet_subs* db);
 MEWNET_SUBS_API mewnet_subs_fetch_result mewnet_subs_fetch_due(mewnet_subs* db);
 
 /* Discovery batch testing. */
@@ -264,6 +278,60 @@ MEWNET_SUBS_API mewnet_subs_test_result mewnet_subs_record_test(mewnet_subs* db,
 
 /* Shared rate limiter. Called automatically by fetch and test_next. */
 MEWNET_SUBS_API mewnet_error mewnet_subs_rate_limit_wait(mewnet_subs* db);
+
+/* ------------------------------------------------------------------ */
+/* Discovery agent                                                     */
+/* ------------------------------------------------------------------ */
+
+typedef struct mewnet_agent mewnet_agent;
+
+typedef struct mewnet_agent_config {
+    mewnet_subs* db;
+    mewnet_instance* milib;
+    int64_t group_id;
+    int proxy_port;
+    size_t batch;
+    size_t concurrency;
+    int fetch_interval_sec;
+    int slow_interval_sec;
+    int pool_target;
+    int health_interval_sec;
+    int health_timeout_ms;
+    const char* health_url;
+    const char* health_expected;
+    int run_seconds; /* 0 = run until mewnet_agent_stop() */
+} mewnet_agent_config;
+
+typedef struct mewnet_agent_snapshot {
+    int64_t proxy_id;
+    char name[MEWNET_NAME_MAX];
+    char protocol[MEWNET_TYPE_MAX];
+    char server[MEWNET_HOST_MAX];
+    int port;
+    unsigned delay_ms;
+    int64_t subscriptions;
+    int64_t proxies;
+    int64_t alive;
+    int64_t untested;
+    bool ready;
+} mewnet_agent_snapshot;
+
+typedef void (*mewnet_agent_log_cb)(const char* message, void* user);
+typedef void (*mewnet_agent_state_cb)(const mewnet_agent_snapshot* snapshot, void* user);
+
+typedef struct mewnet_agent_callbacks {
+    mewnet_agent_log_cb log;
+    mewnet_agent_state_cb state;
+    void* user;
+} mewnet_agent_callbacks;
+
+MEWNET_SUBS_API mewnet_agent_config mewnet_agent_config_default(void);
+MEWNET_SUBS_API mewnet_agent* mewnet_agent_start(const mewnet_agent_config* config,
+                                                 mewnet_agent_callbacks callbacks);
+MEWNET_SUBS_API void mewnet_agent_stop(mewnet_agent* agent);
+MEWNET_SUBS_API void mewnet_agent_request_switch(mewnet_agent* agent);
+MEWNET_SUBS_API void mewnet_agent_request_subscription(mewnet_agent* agent, int64_t subscription_id);
+MEWNET_SUBS_API mewnet_agent_snapshot mewnet_agent_get_snapshot(mewnet_agent* agent);
 
 /* Stats. */
 typedef struct mewnet_subs_stats {

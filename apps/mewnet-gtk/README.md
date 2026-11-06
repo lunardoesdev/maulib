@@ -17,9 +17,9 @@ GTK4 development files are required (`gtk4.pc`). If GTK4 is not installed,
 
 ## What it does
 
-- add/remove subscriptions (URL + priority);
+- add/remove subscriptions (paged list, no priority);
 - fetch a new subscription immediately after it is added;
-- show the active proxy: name, protocol, address, delay;
+- show the active proxy: id, name, protocol, address, delay;
 - **Change proxy** picks a random node among the best verified proxies
   (highest rating, then lowest delay), excluding the current and previous one;
 - show the local mixed proxy, for example `http://127.0.0.1:18085`;
@@ -43,6 +43,8 @@ GTK4 development files are required (`gtk4.pc`). If GTK4 is not installed,
 - Subscriptions are refreshed at most once per hour, except for newly added
   subscriptions and emergencies when no working node exists.
 
+The reliability engine lives in `libmewnet_subs` and is shared with the CLI/TUI
+front-end. Subscription rows are loaded one page at a time (50 by default).
 Full specification and failure matrix:
 [`docs/GTK_RELIABILITY.md`](../../docs/GTK_RELIABILITY.md).
 
@@ -63,9 +65,7 @@ Full specification and failure matrix:
 --health-expected CODE expected health status (default 204)
 --test-url URL         discovery test URL
 --test-expected CODE   discovery expected status (default 204)
---headless             run without GTK (engine tests)
---run-seconds N        stop a headless run after N seconds
---screenshot PATH      render the window to PNG and exit
+--screenshot PATH      render the window to PNG and exit (UI smoke test)
 ```
 
 Positional arguments are subscription URLs added at start.
@@ -79,7 +79,7 @@ curl -x http://127.0.0.1:18085 https://lua.org
 Automated offline failover/recovery test:
 
 ```bash
-make test-gtk-agent
+make test-agent
 ```
 
 It starts local HTTP proxies and a local `204` origin, then verifies bootstrap,

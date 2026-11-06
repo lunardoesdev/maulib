@@ -398,11 +398,11 @@ READY local=http://127.0.0.1:18097
 ### 12.1. Автоматическая проверка отказоустойчивости
 
 ```bash
-make test-gtk-agent
+make test-agent
 ```
 
 Тест офлайновый: локальный `204` origin, три локальных HTTP-прокси, подписка
-на них, запуск `mewnet-gtk --headless`. Результат:
+на них, запуск `mewnet-cli --headless`. Результат:
 
 ```text
 PASS  bootstrap: READY
@@ -444,3 +444,60 @@ UI smoke без ручных кликов:
 ```
 
 Окно отрисовывается в PNG и приложение завершается.
+
+## 13. Agent library, dedup and memory scaling
+
+### 13.1. Dedup
+
+На копии рабочей базы (21 184 прокси, 30 подписок) открытие с новой схемой:
+
+```text
+до:      21184 прокси
+после:   12638 прокси
+удалено:  8546 дубликатов
+дублей identity: 0
+время миграции: ~2.2 с
+```
+
+Identity = SHA-256(protocol + host + port + credentials). Имя, `#fragment` и
+транспортные опции не учитываются. Уникальный индекс:
+`proxies(group_id, identity_hash)`.
+
+### 13.2. Память
+
+```text
+30 подписок, 12 638 прокси:      GTK ~159 МБ RSS
+10 030 подписок, 12 638 прокси:  GTK ~159 МБ RSS
+```
+
+Список подписок в UI — страница по 50 строк; agent использует SQL-счётчики,
+`ORDER BY ... LIMIT 1` и не загружает миллионы строк. SQLite cache ограничен
+8 МБ, `temp_store=FILE`.
+
+### 13.3. Долгие подписки
+
+Подписка скачивается во временный файл; транзакция SQLite начинается только
+после загрузки. Остановка CLI во время скачивания большой подписки:
+
+```text
+exit_ms=108
+```
+
+То есть fetch отменяется и не блокирует закрытие/health-check.
+
+### 13.4. Общий agent
+
+`mewnet_agent` в `libmewnet_subs` используется GTK4 и CLI/TUI. Офлайновый
+тест `make test-agent` (ранее `test-gtk-agent`) проходит 19/19 на CLI:
+
+```text
+bootstrap, pool growth, random switch across 3 nodes, health failover,
+total outage, recovery, wait-for-subscription
+```
+
+CLI/TUI:
+
+```bash
+make cli
+# s — случайный лучший прокси, q — выход
+```

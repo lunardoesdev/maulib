@@ -100,7 +100,9 @@ static int detect_mode(const uint8_t* data, size_t len) {
 
 static int process_link(ingest_ctx* ctx, const char* line) {
     uint8_t hash[32];
+    uint8_t identity[32];
     subs_link_hash(line, hash);
+    subs_link_identity(line, identity);
 
     char name[MEWNET_NAME_MAX];
     char protocol[MEWNET_TYPE_MAX];
@@ -115,10 +117,11 @@ static int process_link(ingest_ctx* ctx, const char* line) {
     sqlite3_bind_int64(stmt, 1, ctx->group_id);
     subs_db_bind_text(stmt, 2, line);
     subs_db_bind_blob(stmt, 3, hash, (int)sizeof(hash));
-    subs_db_bind_text(stmt, 4, name);
-    subs_db_bind_text(stmt, 5, protocol);
-    subs_db_bind_text(stmt, 6, server);
-    sqlite3_bind_int(stmt, 7, port);
+    subs_db_bind_blob(stmt, 4, identity, (int)sizeof(identity));
+    subs_db_bind_text(stmt, 5, name);
+    subs_db_bind_text(stmt, 6, protocol);
+    subs_db_bind_text(stmt, 7, server);
+    sqlite3_bind_int(stmt, 8, port);
     int rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
         return ingest_fail(ctx, "insert proxy: %s", sqlite3_errmsg(ctx->subs->db));
@@ -129,7 +132,7 @@ static int process_link(ingest_ctx* ctx, const char* line) {
     sqlite3_reset(stmt);
     sqlite3_clear_bindings(stmt);
     sqlite3_bind_int64(stmt, 1, ctx->group_id);
-    subs_db_bind_blob(stmt, 2, hash, (int)sizeof(hash));
+    subs_db_bind_blob(stmt, 2, identity, (int)sizeof(identity));
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_ROW) {
         sqlite3_reset(stmt);
@@ -141,11 +144,12 @@ static int process_link(ingest_ctx* ctx, const char* line) {
     stmt = ctx->update_proxy;
     sqlite3_reset(stmt);
     sqlite3_clear_bindings(stmt);
-    subs_db_bind_text(stmt, 1, name);
-    subs_db_bind_text(stmt, 2, protocol);
-    subs_db_bind_text(stmt, 3, server);
-    sqlite3_bind_int(stmt, 4, port);
-    sqlite3_bind_int64(stmt, 5, proxy_id);
+    subs_db_bind_text(stmt, 1, line);
+    subs_db_bind_text(stmt, 2, name);
+    subs_db_bind_text(stmt, 3, protocol);
+    subs_db_bind_text(stmt, 4, server);
+    sqlite3_bind_int(stmt, 5, port);
+    sqlite3_bind_int64(stmt, 6, proxy_id);
     rc = sqlite3_step(stmt);
     if (rc != SQLITE_DONE) {
         return ingest_fail(ctx, "update proxy: %s", sqlite3_errmsg(ctx->subs->db));
@@ -364,11 +368,6 @@ static void apply_http_metadata(ingest_ctx* ctx, const mewnet_http_result* http)
     }
 }
 
-static int http_write_cb(const void* data, size_t len, void* user) {
-    ingest_ctx* ctx = (ingest_ctx*)user;
-    return ingest_feed(ctx, (const uint8_t*)data, len) == 0 ? 0 : 1;
-}
-
 static void ingest_free(ingest_ctx* ctx) {
     if (ctx->insert_proxy != NULL) sqlite3_finalize(ctx->insert_proxy);
     if (ctx->select_proxy != NULL) sqlite3_finalize(ctx->select_proxy);
@@ -484,6 +483,19 @@ static int update_subscription_failure(mewnet_subs* db, int64_t id, int failure_
     return 0;
 }
 
+typedef struct download_ctx {
+    FILE* file;
+    mewnet_subs* subs;
+} download_ctx;
+
+static int download_write_cb(const void* data, size_t len, void* user) {
+    download_ctx* ctx = (download_ctx*)user;
+    if (ctx->subs->cancel_fetch) {
+        return 1;
+    }
+    return fwrite(data, 1, len, ctx->file) == len ? 0 : 1;
+}
+
 static mewnet_subs_fetch_result fetch_impl(mewnet_subs* db, int64_t subscription_id, bool wait) {
     mewnet_subs_fetch_result result;
     memset(&result, 0, sizeof(result));
@@ -497,7 +509,6 @@ static mewnet_subs_fetch_result fetch_impl(mewnet_subs* db, int64_t subscription
     if (load_sub_row(db, subscription_id, &row, &result.error) != 0) {
         return result;
     }
-
     if (wait) {
         result.error = mewnet_subs_rate_limit_wait(db);
         if (result.error.code != MEWNET_ERROR_NONE) {
@@ -513,9 +524,63 @@ static mewnet_subs_fetch_result fetch_impl(mewnet_subs* db, int64_t subscription
     http_options.last_modified = row.last_modified[0] != '\0' ? row.last_modified : NULL;
     http_options.max_redirects = 5;
 
+    FILE* download = tmpfile();
+    if (download == NULL) {
+        result.error = subs_make_error(MEWNET_ERROR_FAILED, "could not create temporary file");
+        return result;
+    }
+    db->cancel_fetch = 0;
+    download_ctx download_state = {.file = download, .subs = db};
+    mewnet_http_result http = mewnet_http_stream(row.url, &http_options,
+                                                 download_write_cb, &download_state);
+    result.http_status = http.status;
+
+    if (db->cancel_fetch) {
+        fclose(download);
+        result.error = subs_make_error(MEWNET_ERROR_CANCELLED, "fetch cancelled");
+        return result;
+    }
+    if (!http.ok) {
+        fclose(download);
+        result.error = http.error;
+        mewnet_error update_err;
+        subs_clear_error(&update_err);
+        update_subscription_failure(db, subscription_id, row.failure_count, subs_now_ms(),
+                                    http.status, result.error.message, &update_err);
+        return result;
+    }
+    if (http.status == 304) {
+        fclose(download);
+        int64_t now = subs_now_ms();
+        int64_t fetch_interval = row.fetch_interval_sec > 0 ? row.fetch_interval_sec
+                                                            : db->default_fetch_interval_sec;
+        int64_t next = now + (int64_t)fetch_interval * 1000;
+        mewnet_error err;
+        subs_clear_error(&err);
+        sqlite3_stmt* stmt = NULL;
+        if (subs_db_prepare(db->db, &stmt,
+                            "UPDATE subscriptions SET last_fetch_at=?, next_fetch_at=?,"
+                            " last_status=304, failure_count=0, last_error='' WHERE id=?",
+                            &err) == 0) {
+            sqlite3_bind_int64(stmt, 1, now);
+            sqlite3_bind_int64(stmt, 2, next);
+            sqlite3_bind_int64(stmt, 3, subscription_id);
+            if (sqlite3_step(stmt) != SQLITE_DONE) {
+                result.error = subs_db_error(db->db, "update subscription 304");
+            }
+            sqlite3_finalize(stmt);
+        } else {
+            result.error = err;
+        }
+        return result;
+    }
+
+    rewind(download);
+
     mewnet_error err;
     subs_clear_error(&err);
     if (subs_db_exec(db->db, "BEGIN IMMEDIATE;", &err) != 0) {
+        fclose(download);
         result.error = err;
         return result;
     }
@@ -524,6 +589,7 @@ static mewnet_subs_fetch_result fetch_impl(mewnet_subs* db, int64_t subscription
     int64_t generation = row.generation + 1;
     if (subs_db_prepare(db->db, &generation_stmt,
                         "UPDATE subscriptions SET generation=? WHERE id=?", &err) != 0) {
+        fclose(download);
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         result.error = err;
         return result;
@@ -532,6 +598,7 @@ static mewnet_subs_fetch_result fetch_impl(mewnet_subs* db, int64_t subscription
     sqlite3_bind_int64(generation_stmt, 2, subscription_id);
     if (sqlite3_step(generation_stmt) != SQLITE_DONE) {
         sqlite3_finalize(generation_stmt);
+        fclose(download);
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         result.error = subs_db_error(db->db, "update generation");
         return result;
@@ -552,81 +619,54 @@ static mewnet_subs_fetch_result fetch_impl(mewnet_subs* db, int64_t subscription
 
     if (subs_db_prepare(db->db, &ctx.insert_proxy,
                         "INSERT OR IGNORE INTO proxies"
-                        "(group_id,link,link_hash,name,protocol,server,port)"
-                        " VALUES(?,?,?,?,?,?,?)",
-                        &err) != 0 ||
+                        "(group_id,link,link_hash,identity_hash,name,protocol,server,port)"
+                        " VALUES(?,?,?,?,?,?,?,?)", &err) != 0 ||
         subs_db_prepare(db->db, &ctx.select_proxy,
-                        "SELECT id FROM proxies WHERE group_id=? AND link_hash=?",
-                        &err) != 0 ||
+                        "SELECT id FROM proxies WHERE group_id=? AND identity_hash=?", &err) != 0 ||
         subs_db_prepare(db->db, &ctx.update_proxy,
-                        "UPDATE proxies SET"
+                        "UPDATE proxies SET link=?,"
                         " name=CASE WHEN name='' THEN ? ELSE name END,"
                         " protocol=CASE WHEN protocol='' THEN ? ELSE protocol END,"
                         " server=CASE WHEN server='' THEN ? ELSE server END,"
                         " port=CASE WHEN port=0 THEN ? ELSE port END,"
-                        " manual=0 WHERE id=?",
-                        &err) != 0 ||
+                        " manual=0 WHERE id=?", &err) != 0 ||
         subs_db_prepare(db->db, &ctx.upsert_source,
                         "INSERT INTO proxy_sources(proxy_id,subscription_id,last_seen_generation)"
                         " VALUES(?,?,?)"
                         " ON CONFLICT(proxy_id,subscription_id) DO UPDATE SET"
-                        " last_seen_generation=excluded.last_seen_generation",
-                        &err) != 0) {
+                        " last_seen_generation=excluded.last_seen_generation", &err) != 0) {
         ingest_free(&ctx);
+        fclose(download);
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         result.error = err;
         return result;
     }
 
-    mewnet_http_result http = mewnet_http_stream(row.url, &http_options, http_write_cb, &ctx);
-    result.http_status = http.status;
-    if (!http.ok) {
+    char buffer[65536];
+    size_t read_bytes;
+    while ((read_bytes = fread(buffer, 1, sizeof(buffer), download)) > 0) {
+        if (ingest_feed(&ctx, (const uint8_t*)buffer, read_bytes) != 0) {
+            break;
+        }
+    }
+    fclose(download);
+    if (ctx.failed) {
         ingest_free(&ctx);
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
-        if (ctx.failed && ctx.error.code != MEWNET_ERROR_NONE) {
-            result.error = ctx.error;
-        } else {
-            result.error = http.error;
-        }
+        result.error = ctx.error;
         mewnet_error update_err;
         subs_clear_error(&update_err);
-        int64_t now = subs_now_ms();
-        update_subscription_failure(db, subscription_id, row.failure_count, now,
+        update_subscription_failure(db, subscription_id, row.failure_count, subs_now_ms(),
                                     http.status, result.error.message, &update_err);
         return result;
     }
-
-    if (http.status == 304) {
-        ingest_free(&ctx);
-        sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
-        int64_t now = subs_now_ms();
-        int64_t next = now + (int64_t)ctx.fetch_interval_sec * 1000;
-        sqlite3_stmt* stmt = NULL;
-        if (subs_db_prepare(db->db, &stmt,
-                            "UPDATE subscriptions SET last_fetch_at=?, next_fetch_at=?,"
-                            " last_status=304, failure_count=0, last_error='' WHERE id=?",
-                            &err) == 0) {
-            sqlite3_bind_int64(stmt, 1, now);
-            sqlite3_bind_int64(stmt, 2, next);
-            sqlite3_bind_int64(stmt, 3, subscription_id);
-            if (sqlite3_step(stmt) != SQLITE_DONE) {
-                result.error = subs_db_error(db->db, "update subscription 304");
-            }
-            sqlite3_finalize(stmt);
-        } else {
-            result.error = err;
-        }
-        return result;
-    }
-
     if (ingest_finish(&ctx) != 0) {
         ingest_free(&ctx);
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         result.error = ctx.error;
-        int64_t now = subs_now_ms();
         mewnet_error update_err;
         subs_clear_error(&update_err);
-        update_subscription_failure(db, subscription_id, row.failure_count, now,
+        update_subscription_failure(db, subscription_id, row.failure_count, subs_now_ms(),
                                     http.status, result.error.message, &update_err);
         return result;
     }
@@ -638,10 +678,9 @@ static mewnet_subs_fetch_result fetch_impl(mewnet_subs* db, int64_t subscription
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         result.error = subs_make_error(MEWNET_ERROR_FAILED,
                                        "subscription contains no configs");
-        int64_t now = subs_now_ms();
         mewnet_error update_err;
         subs_clear_error(&update_err);
-        update_subscription_failure(db, subscription_id, row.failure_count, now,
+        update_subscription_failure(db, subscription_id, row.failure_count, subs_now_ms(),
                                     http.status, result.error.message, &update_err);
         return result;
     }
@@ -649,8 +688,7 @@ static mewnet_subs_fetch_result fetch_impl(mewnet_subs* db, int64_t subscription
     sqlite3_stmt* delete_stmt = NULL;
     if (subs_db_prepare(db->db, &delete_stmt,
                         "DELETE FROM proxy_sources WHERE subscription_id=?"
-                        " AND last_seen_generation<>?",
-                        &err) != 0) {
+                        " AND last_seen_generation<>?", &err) != 0) {
         ingest_free(&ctx);
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         result.error = err;
@@ -731,8 +769,7 @@ mewnet_subs_fetch_result mewnet_subs_fetch_due(mewnet_subs* db) {
                         "SELECT s.id FROM subscriptions s"
                         " JOIN subscription_groups g ON g.id=s.group_id"
                         " WHERE s.enabled=1 AND g.enabled=1 AND s.next_fetch_at<=?"
-                        " ORDER BY g.priority DESC, s.priority DESC,"
-                        " s.next_fetch_at ASC, s.id ASC LIMIT 1",
+                        " ORDER BY s.next_fetch_at ASC, s.id ASC LIMIT 1",
                         &err) != 0) {
         result.error = err;
         return result;

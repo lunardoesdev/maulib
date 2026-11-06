@@ -220,6 +220,12 @@ typedef struct mewnet_link_test_result {
     unsigned delay_ms;
 } mewnet_link_test_result;
 
+typedef struct mewnet_fingerprint_result {
+    bool ok;
+    mewnet_error error;
+    uint8_t hash[32];
+} mewnet_fingerprint_result;
+
 /* Batch link testing. */
 typedef struct mewnet_batch_test_result {
     bool ok;

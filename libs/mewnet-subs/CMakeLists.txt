@@ -35,7 +35,8 @@ add_library(mewnet_subs SHARED
     src/sha256.c
     src/fetch.c
     src/rating.c
-    src/batch.c)
+    src/batch.c
+    src/agent.c)
 
 target_include_directories(mewnet_subs
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${MEWNET_ROOT}/libs/mewnet/include"

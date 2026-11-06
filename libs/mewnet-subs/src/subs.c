@@ -1,5 +1,6 @@
 #include "mewnet_subs_internal.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +44,7 @@ static const char* k_proxies_schema =
     " group_id INTEGER NOT NULL REFERENCES subscription_groups(id) ON DELETE CASCADE,"
     " link TEXT NOT NULL,"
     " link_hash BLOB NOT NULL,"
+    " identity_hash BLOB,"
     " name TEXT NOT NULL DEFAULT '',"
     " protocol TEXT NOT NULL DEFAULT '',"
     " server TEXT NOT NULL DEFAULT '',"
@@ -85,7 +87,12 @@ static const char* k_indexes_schema =
     "CREATE INDEX IF NOT EXISTS idx_subs_group ON subscriptions(group_id, priority);"
     "CREATE INDEX IF NOT EXISTS idx_subs_priority ON subscriptions(priority, next_fetch_at);"
     "CREATE INDEX IF NOT EXISTS idx_sources_sub ON proxy_sources(subscription_id, last_seen_generation);"
-    "CREATE INDEX IF NOT EXISTS idx_events_proxy ON test_events(proxy_id, ts);";
+    "CREATE INDEX IF NOT EXISTS idx_events_proxy ON test_events(proxy_id, ts);"
+    "CREATE INDEX IF NOT EXISTS idx_proxies_group_alive ON proxies(group_id, alive);"
+    "CREATE INDEX IF NOT EXISTS idx_proxies_identity_lookup ON proxies(group_id, identity_hash);"
+    "CREATE INDEX IF NOT EXISTS idx_proxies_untested ON proxies(group_id, last_tested_at);"
+    "CREATE INDEX IF NOT EXISTS idx_subs_fetch ON subscriptions(group_id, last_fetch_at);"
+    "CREATE INDEX IF NOT EXISTS idx_subs_unfetched ON subscriptions(group_id, last_fetch_at, failure_count);";
 
 mewnet_subs_config mewnet_subs_config_default(void) {
     mewnet_subs_config config;
@@ -115,6 +122,246 @@ static void copy_config_string(char* dst, size_t dst_size, const char* src, cons
     }
     memcpy(dst, value, len);
     dst[len] = '\0';
+}
+
+static void identity_hash_text(const char* text, uint8_t out[32]) {
+    subs_sha256(text, strlen(text), out);
+}
+
+static void lower_copy(char* dst, size_t dst_size, const char* src, size_t src_len) {
+    size_t i = 0;
+    for (; i + 1 < dst_size && i < src_len; i++) {
+        dst[i] = (char)tolower((unsigned char)src[i]);
+    }
+    dst[i] = '\0';
+}
+
+static int split_host_port(const char* value, size_t len,
+                           char* host, size_t host_size, int* port) {
+    if (len == 0) {
+        return -1;
+    }
+    if (value[0] == '[') {
+        const char* close = memchr(value, ']', len);
+        if (close == NULL) {
+            return -1;
+        }
+        size_t hlen = (size_t)(close - value + 1);
+        lower_copy(host, host_size, value, hlen);
+        const char* rest = close + 1;
+        if (rest < value + len && *rest == ':') {
+            *port = atoi(rest + 1);
+        }
+        return 0;
+    }
+    const char* colon = NULL;
+    for (const char* p = value; p < value + len; p++) {
+        if (*p == ':') {
+            colon = p;
+        }
+    }
+    if (colon == NULL) {
+        lower_copy(host, host_size, value, len);
+        *port = 0;
+        return 0;
+    }
+    lower_copy(host, host_size, value, (size_t)(colon - value));
+    *port = atoi(colon + 1);
+    return 0;
+}
+
+static int identity_from_uri(const char* scheme, const char* body, uint8_t out[32]) {
+    const char* end = body + strcspn(body, "?#");
+    const char* slash = memchr(body, '/', (size_t)(end - body));
+    if (slash != NULL) {
+        end = slash;
+    }
+    const char* at = NULL;
+    for (const char* p = body; p < end; p++) {
+        if (*p == '@') {
+            at = p;
+        }
+    }
+    const char* host_part = at != NULL ? at + 1 : body;
+    size_t user_len = at != NULL ? (size_t)(at - body) : 0;
+    char host[MEWNET_HOST_MAX];
+    int port = 0;
+    if (split_host_port(host_part, (size_t)(end - host_part), host, sizeof(host), &port) != 0) {
+        return -1;
+    }
+    char canonical[MEWNET_LINK_MAX];
+    int n = snprintf(canonical, sizeof(canonical), "%s|%.*s|%s|%d",
+                     scheme, (int)user_len, at != NULL ? body : "", host, port);
+    if (n <= 0 || (size_t)n >= sizeof(canonical)) {
+        return -1;
+    }
+    identity_hash_text(canonical, out);
+    return 0;
+}
+
+static const char* json_value(const char* json, const char* key,
+                              char* out, size_t out_size) {
+    char pattern[64];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char* pos = strstr(json, pattern);
+    if (pos == NULL) {
+        return NULL;
+    }
+    pos += strlen(pattern);
+    while (*pos == ' ' || *pos == '\t' || *pos == '\r' || *pos == '\n') pos++;
+    if (*pos != ':') {
+        return NULL;
+    }
+    pos++;
+    while (*pos == ' ' || *pos == '\t' || *pos == '\r' || *pos == '\n') pos++;
+    if (*pos == '"') {
+        pos++;
+        const char* end = strchr(pos, '"');
+        if (end == NULL) {
+            return NULL;
+        }
+        size_t len = (size_t)(end - pos);
+        if (len >= out_size) len = out_size - 1;
+        memcpy(out, pos, len);
+        out[len] = '\0';
+        return out;
+    }
+    size_t len = strcspn(pos, ",}\r\n");
+    if (len >= out_size) len = out_size - 1;
+    memcpy(out, pos, len);
+    out[len] = '\0';
+    return out;
+}
+
+static int identity_vmess(const char* body, uint8_t out[32]) {
+    size_t len = strcspn(body, "?#");
+    if (len == 0 || len >= MEWNET_LINK_MAX) {
+        return -1;
+    }
+    char encoded[MEWNET_LINK_MAX];
+    memcpy(encoded, body, len);
+    encoded[len] = '\0';
+    char json[MEWNET_LINK_MAX];
+    if (subs_b64_decode_string(encoded, json, sizeof(json)) != 0) {
+        return -1;
+    }
+    char add[MEWNET_HOST_MAX];
+    char id[MEWNET_NAME_MAX];
+    char port[32];
+    char aid[32];
+    if (json_value(json, "add", add, sizeof(add)) == NULL ||
+        json_value(json, "id", id, sizeof(id)) == NULL ||
+        json_value(json, "port", port, sizeof(port)) == NULL) {
+        return -1;
+    }
+    if (json_value(json, "aid", aid, sizeof(aid)) == NULL) {
+        aid[0] = '\0';
+    }
+    char host[MEWNET_HOST_MAX];
+    lower_copy(host, sizeof(host), add, strlen(add));
+    char canonical[MEWNET_LINK_MAX];
+    int n = snprintf(canonical, sizeof(canonical), "vmess|%s|%s|%s|%s",
+                     id, host, port, aid);
+    if (n <= 0 || (size_t)n >= sizeof(canonical)) {
+        return -1;
+    }
+    identity_hash_text(canonical, out);
+    return 0;
+}
+
+static int identity_ss(const char* body, uint8_t out[32]) {
+    size_t len = strcspn(body, "?#");
+    if (len == 0 || len >= MEWNET_LINK_MAX) {
+        return -1;
+    }
+    char raw[MEWNET_LINK_MAX];
+    memcpy(raw, body, len);
+    raw[len] = '\0';
+
+    char decoded[MEWNET_LINK_MAX];
+    char* at = strrchr(raw, '@');
+    const char* host_part = NULL;
+    char auth[MEWNET_LINK_MAX];
+    if (at != NULL) {
+        *at = '\0';
+        if (subs_b64_decode_string(raw, auth, sizeof(auth)) != 0) {
+            return -1;
+        }
+        host_part = at + 1;
+    } else {
+        if (subs_b64_decode_string(raw, decoded, sizeof(decoded)) != 0) {
+            return -1;
+        }
+        char* inner_at = strrchr(decoded, '@');
+        if (inner_at == NULL) {
+            return -1;
+        }
+        *inner_at = '\0';
+        snprintf(auth, sizeof(auth), "%s", decoded);
+        host_part = inner_at + 1;
+    }
+
+    char method[128];
+    char password[MEWNET_NAME_MAX];
+    const char* colon = strchr(auth, ':');
+    if (colon == NULL) {
+        return -1;
+    }
+    size_t mlen = (size_t)(colon - auth);
+    if (mlen >= sizeof(method)) mlen = sizeof(method) - 1;
+    memcpy(method, auth, mlen);
+    method[mlen] = '\0';
+    snprintf(password, sizeof(password), "%s", colon + 1);
+
+    char host[MEWNET_HOST_MAX];
+    int port = 0;
+    if (split_host_port(host_part, strlen(host_part), host, sizeof(host), &port) != 0) {
+        return -1;
+    }
+    char canonical[MEWNET_LINK_MAX];
+    int n = snprintf(canonical, sizeof(canonical), "ss|%s|%s|%s|%d",
+                     method, password, host, port);
+    if (n <= 0 || (size_t)n >= sizeof(canonical)) {
+        return -1;
+    }
+    identity_hash_text(canonical, out);
+    return 0;
+}
+
+void subs_link_identity(const char* link, uint8_t out[32]) {
+    if (link == NULL) {
+        memset(out, 0, 32);
+        return;
+    }
+    const char* scheme_end = strstr(link, "://");
+    if (scheme_end != NULL && (size_t)(scheme_end - link) < 32) {
+        char scheme[32];
+        lower_copy(scheme, sizeof(scheme), link, (size_t)(scheme_end - link));
+        const char* body = scheme_end + 3;
+        int ok = -1;
+        if (strcmp(scheme, "vmess") == 0) {
+            ok = identity_vmess(body, out);
+        } else if (strcmp(scheme, "ss") == 0) {
+            ok = identity_ss(body, out);
+        } else if (strcmp(scheme, "vless") == 0 || strcmp(scheme, "trojan") == 0 ||
+                   strcmp(scheme, "http") == 0 || strcmp(scheme, "https") == 0 ||
+                   strcmp(scheme, "socks5") == 0 || strcmp(scheme, "hysteria2") == 0 ||
+                   strcmp(scheme, "hysteria") == 0 || strcmp(scheme, "tuic") == 0 ||
+                   strcmp(scheme, "anytls") == 0) {
+            ok = identity_from_uri(scheme, body, out);
+        }
+        if (ok == 0) {
+            return;
+        }
+    }
+
+    /* Unusual or malformed link: use the parser-backed fallback. */
+    mewnet_fingerprint_result fp = mewnet_link_fingerprint(link);
+    if (fp.ok) {
+        memcpy(out, fp.hash, 32);
+        return;
+    }
+    subs_link_hash(link, out);
 }
 
 static int table_has_column(sqlite3* db, const char* table, const char* column) {
@@ -180,8 +427,149 @@ static int64_t subs_default_group_id(mewnet_subs* db, mewnet_error* err) {
     return sqlite3_last_insert_rowid(db->db);
 }
 
+/* Fill identity_hash for old rows and merge exact duplicates. The batch is
+ * bounded (200 links at a time) so opening a database with millions of proxies
+ * does not load the whole table into memory. */
+static int subs_identity_backfill(mewnet_subs* db, mewnet_error* err) {
+    sqlite3_stmt* check = NULL;
+    if (subs_db_prepare(db->db, &check,
+                        "SELECT 1 FROM proxies WHERE identity_hash IS NULL LIMIT 1",
+                        err) != 0) {
+        return -1;
+    }
+    int has_nulls = sqlite3_step(check) == SQLITE_ROW;
+    sqlite3_finalize(check);
+
+    if (has_nulls) {
+        int64_t last_id = 0;
+        for (;;) {
+            if (subs_db_exec(db->db, "BEGIN IMMEDIATE;", err) != 0) {
+                return -1;
+            }
+            sqlite3_stmt* select_batch = NULL;
+            if (subs_db_prepare(db->db, &select_batch,
+                                "SELECT id,group_id,link FROM proxies"
+                                " WHERE id>? AND identity_hash IS NULL"
+                                " ORDER BY id LIMIT 200",
+                                err) != 0) {
+                sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
+                return -1;
+            }
+            sqlite3_bind_int64(select_batch, 1, last_id);
+            int64_t ids[200];
+            int64_t groups[200];
+            char* links[200];
+            size_t count = 0;
+            while (count < 200 && sqlite3_step(select_batch) == SQLITE_ROW) {
+                ids[count] = sqlite3_column_int64(select_batch, 0);
+                groups[count] = sqlite3_column_int64(select_batch, 1);
+                const char* link = (const char*)sqlite3_column_text(select_batch, 2);
+                links[count] = strdup(link != NULL ? link : "");
+                if (links[count] == NULL) {
+                    break;
+                }
+                count++;
+            }
+            sqlite3_finalize(select_batch);
+            if (count == 0) {
+                sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
+                break;
+            }
+
+            sqlite3_stmt* dup = NULL;
+            sqlite3_stmt* merge = NULL;
+            sqlite3_stmt* del = NULL;
+            sqlite3_stmt* upd = NULL;
+            if (subs_db_prepare(db->db, &dup,
+                                "SELECT id FROM proxies WHERE group_id=? AND identity_hash=?"
+                                " AND id<>? LIMIT 1", err) != 0 ||
+                subs_db_prepare(db->db, &merge,
+                                "INSERT OR IGNORE INTO proxy_sources"
+                                "(proxy_id,subscription_id,last_seen_generation)"
+                                " SELECT ?, subscription_id, last_seen_generation"
+                                " FROM proxy_sources WHERE proxy_id=?", err) != 0 ||
+                subs_db_prepare(db->db, &del, "DELETE FROM proxies WHERE id=?", err) != 0 ||
+                subs_db_prepare(db->db, &upd,
+                                "UPDATE proxies SET identity_hash=? WHERE id=?", err) != 0) {
+                for (size_t i = 0; i < count; i++) free(links[i]);
+                if (dup) sqlite3_finalize(dup);
+                if (merge) sqlite3_finalize(merge);
+                if (del) sqlite3_finalize(del);
+                if (upd) sqlite3_finalize(upd);
+                sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
+                return -1;
+            }
+
+            for (size_t i = 0; i < count; i++) {
+                uint8_t identity[32];
+                subs_link_identity(links[i], identity);
+
+                sqlite3_reset(dup);
+                sqlite3_clear_bindings(dup);
+                sqlite3_bind_int64(dup, 1, groups[i]);
+                subs_db_bind_blob(dup, 2, identity, (int)sizeof(identity));
+                sqlite3_bind_int64(dup, 3, ids[i]);
+                int rc = sqlite3_step(dup);
+                if (rc == SQLITE_ROW) {
+                    int64_t keep_id = sqlite3_column_int64(dup, 0);
+                    sqlite3_reset(merge);
+                    sqlite3_clear_bindings(merge);
+                    sqlite3_bind_int64(merge, 1, keep_id);
+                    sqlite3_bind_int64(merge, 2, ids[i]);
+                    sqlite3_step(merge);
+
+                    sqlite3_reset(del);
+                    sqlite3_clear_bindings(del);
+                    sqlite3_bind_int64(del, 1, ids[i]);
+                    sqlite3_step(del);
+                } else if (rc == SQLITE_DONE) {
+                    sqlite3_reset(upd);
+                    sqlite3_clear_bindings(upd);
+                    subs_db_bind_blob(upd, 1, identity, (int)sizeof(identity));
+                    sqlite3_bind_int64(upd, 2, ids[i]);
+                    sqlite3_step(upd);
+                } else {
+                    for (size_t j = 0; j < count; j++) free(links[j]);
+                    sqlite3_finalize(dup);
+                    sqlite3_finalize(merge);
+                    sqlite3_finalize(del);
+                    sqlite3_finalize(upd);
+                    sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
+                    *err = subs_db_error(db->db, "backfill proxy identity");
+                    return -1;
+                }
+                last_id = ids[i];
+            }
+            sqlite3_finalize(dup);
+            sqlite3_finalize(merge);
+            sqlite3_finalize(del);
+            sqlite3_finalize(upd);
+            for (size_t i = 0; i < count; i++) free(links[i]);
+            if (subs_db_exec(db->db, "COMMIT;", err) != 0) {
+                return -1;
+            }
+        }
+    }
+
+    if (subs_db_exec(db->db,
+                     "CREATE UNIQUE INDEX IF NOT EXISTS idx_proxies_identity"
+                     " ON proxies(group_id, identity_hash);", err) != 0) {
+        return -1;
+    }
+    return subs_db_exec(db->db,
+                        "DROP INDEX IF EXISTS idx_proxies_identity_lookup;", err);
+}
+
 static int subs_migrate(mewnet_subs* db, int64_t default_group, mewnet_error* err) {
     /* v1 did not have manual. */
+    if (!table_has_column(db->db, "proxies", "identity_hash")) {
+        if (subs_db_exec(db->db,
+                         "ALTER TABLE proxies ADD COLUMN identity_hash BLOB;",
+                         err) != 0) {
+            return -1;
+        }
+    }
+
     if (!table_has_column(db->db, "proxies", "manual")) {
         if (subs_db_exec(db->db,
                          "ALTER TABLE proxies ADD COLUMN manual INTEGER NOT NULL DEFAULT 0;",
@@ -253,6 +641,9 @@ static int subs_migrate(mewnet_subs* db, int64_t default_group, mewnet_error* er
     if (subs_db_exec(db->db, k_indexes_schema, err) != 0) {
         return -1;
     }
+    if (subs_identity_backfill(db, err) != 0) {
+        return -1;
+    }
 
     char version[64];
     snprintf(version, sizeof(version), "PRAGMA user_version = 2;");
@@ -298,6 +689,7 @@ mewnet_subs_open_result mewnet_subs_open(const mewnet_subs_config* config) {
         result.error = subs_make_error(MEWNET_ERROR_FAILED, "out of memory");
         return result;
     }
+    snprintf(db->db_path, sizeof(db->db_path), "%s", config->db_path);
     copy_config_string(db->user_agent, sizeof(db->user_agent), config->user_agent,
                        defaults.user_agent);
     copy_config_string(db->test_url, sizeof(db->test_url), config->test_url,
@@ -339,6 +731,9 @@ mewnet_subs_open_result mewnet_subs_open(const mewnet_subs_config* config) {
     if (subs_db_exec(db->db, "PRAGMA journal_mode = WAL;", &err) != 0 ||
         subs_db_exec(db->db, "PRAGMA synchronous = NORMAL;", &err) != 0 ||
         subs_db_exec(db->db, "PRAGMA foreign_keys = ON;", &err) != 0 ||
+        subs_db_exec(db->db, "PRAGMA cache_size = -4096;", &err) != 0 ||
+        subs_db_exec(db->db, "PRAGMA temp_store = FILE;", &err) != 0 ||
+        subs_db_exec(db->db, "PRAGMA wal_autocheckpoint = 1000;", &err) != 0 ||
         subs_create_schema(db->db, &err) != 0) {
         result.error = err;
         sqlite3_close(db->db);
@@ -359,6 +754,29 @@ mewnet_subs_open_result mewnet_subs_open(const mewnet_subs_config* config) {
     result.db = db;
     result.error = subs_make_error(MEWNET_ERROR_NONE, "");
     return result;
+}
+
+mewnet_subs* mewnet_subs_clone(mewnet_subs* db) {
+    if (db == NULL) {
+        return NULL;
+    }
+    mewnet_subs_config config = mewnet_subs_config_default();
+    config.db_path = db->db_path;
+    config.user_agent = db->user_agent;
+    config.test_url = db->test_url;
+    config.test_expected = db->test_expected;
+    config.test_timeout_ms = db->test_timeout_ms;
+    config.request_limit = db->request_limit;
+    config.request_window_seconds = db->request_window_seconds;
+    config.default_fetch_interval_sec = db->default_fetch_interval_sec;
+    mewnet_subs_open_result opened = mewnet_subs_open(&config);
+    return opened.db;
+}
+
+void mewnet_subs_cancel_fetch(mewnet_subs* db) {
+    if (db != NULL) {
+        db->cancel_fetch = 1;
+    }
 }
 
 void mewnet_subs_close(mewnet_subs* db) {
@@ -701,7 +1119,9 @@ mewnet_error mewnet_subs_set_enabled(mewnet_subs* db, int64_t id, bool enabled) 
     return subs_make_error(MEWNET_ERROR_NONE, "");
 }
 
-static mewnet_subscription_list load_subscriptions(mewnet_subs* db, int64_t group_id, bool filtered) {
+static mewnet_subscription_list load_subscriptions_impl(mewnet_subs* db, int64_t group_id,
+                                                        bool filtered, size_t limit,
+                                                        size_t offset) {
     mewnet_subscription_list result;
     memset(&result, 0, sizeof(result));
     if (db == NULL) {
@@ -711,54 +1131,61 @@ static mewnet_subscription_list load_subscriptions(mewnet_subs* db, int64_t grou
     mewnet_error err;
     subs_clear_error(&err);
 
-    const char* count_all =
-        "SELECT COUNT(*) FROM subscriptions s";
-    const char* count_group =
-        "SELECT COUNT(*) FROM subscriptions s WHERE s.group_id=?";
     const char* select_all =
         "SELECT s.id,s.group_id,s.url,s.name,s.priority,s.enabled,s.last_fetch_at,"
         "s.next_fetch_at,s.last_status,s.failure_count,s.etag,s.last_modified,s.userinfo,s.last_error"
         " FROM subscriptions s JOIN subscription_groups g ON g.id=s.group_id"
-        " ORDER BY g.priority DESC, s.priority DESC, s.id ASC";
+        " ORDER BY s.group_id ASC, s.id ASC";
     const char* select_group =
         "SELECT s.id,s.group_id,s.url,s.name,s.priority,s.enabled,s.last_fetch_at,"
         "s.next_fetch_at,s.last_status,s.failure_count,s.etag,s.last_modified,s.userinfo,s.last_error"
         " FROM subscriptions s WHERE s.group_id=?"
-        " ORDER BY s.priority DESC, s.id ASC";
+        " ORDER BY s.id ASC";
+    char sql[1024];
+    if (limit > 0) {
+        snprintf(sql, sizeof(sql), "%s LIMIT ? OFFSET ?", filtered ? select_group : select_all);
+    } else {
+        snprintf(sql, sizeof(sql), "%s", filtered ? select_group : select_all);
+    }
 
     sqlite3_stmt* stmt = NULL;
-    if (subs_db_prepare(db->db, &stmt, filtered ? count_group : count_all, &err) != 0) {
+    if (subs_db_prepare(db->db, &stmt, sql, &err) != 0) {
         result.error = err;
         return result;
     }
+    int index = 1;
     if (filtered) {
-        sqlite3_bind_int64(stmt, 1, group_id);
+        sqlite3_bind_int64(stmt, index++, group_id);
     }
-    size_t count = 0;
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        count = (size_t)sqlite3_column_int64(stmt, 0);
-    }
-    sqlite3_finalize(stmt);
 
-    mewnet_subscription* items = NULL;
-    if (count > 0) {
-        items = (mewnet_subscription*)calloc(count, sizeof(mewnet_subscription));
-        if (items == NULL) {
-            result.error = subs_make_error(MEWNET_ERROR_FAILED, "out of memory");
-            return result;
-        }
-    }
-    if (subs_db_prepare(db->db, &stmt, filtered ? select_group : select_all, &err) != 0) {
-        free(items);
-        result.error = err;
+    size_t capacity = limit > 0 ? limit : 16;
+    mewnet_subscription* items = (mewnet_subscription*)calloc(capacity, sizeof(mewnet_subscription));
+    if (items == NULL) {
+        sqlite3_finalize(stmt);
+        result.error = subs_make_error(MEWNET_ERROR_FAILED, "out of memory");
         return result;
     }
-    if (filtered) {
-        sqlite3_bind_int64(stmt, 1, group_id);
+    if (limit > 0) {
+        sqlite3_bind_int64(stmt, index++, (int64_t)limit);
+        sqlite3_bind_int64(stmt, index++, (int64_t)offset);
     }
+
     size_t used = 0;
     int rc;
-    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW && used < count) {
+    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
+        if (used == capacity) {
+            size_t next = capacity * 2;
+            mewnet_subscription* grown =
+                (mewnet_subscription*)realloc(items, next * sizeof(mewnet_subscription));
+            if (grown == NULL) {
+                sqlite3_finalize(stmt);
+                free(items);
+                result.error = subs_make_error(MEWNET_ERROR_FAILED, "out of memory");
+                return result;
+            }
+            items = grown;
+            capacity = next;
+        }
         mewnet_subscription* item = &items[used++];
         item->id = sqlite3_column_int64(stmt, 0);
         item->group_id = sqlite3_column_int64(stmt, 1);
@@ -776,7 +1203,7 @@ static mewnet_subscription_list load_subscriptions(mewnet_subs* db, int64_t grou
         subs_db_copy_text(stmt, 13, item->last_error, sizeof(item->last_error));
     }
     sqlite3_finalize(stmt);
-    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+    if (rc != SQLITE_DONE) {
         free(items);
         result.error = subs_db_error(db->db, "load subscriptions");
         return result;
@@ -788,11 +1215,105 @@ static mewnet_subscription_list load_subscriptions(mewnet_subs* db, int64_t grou
 }
 
 mewnet_subscription_list mewnet_subs_load_subscriptions(mewnet_subs* db) {
-    return load_subscriptions(db, 0, false);
+    return load_subscriptions_impl(db, 0, false, 0, 0);
 }
 
 mewnet_subscription_list mewnet_subs_load_subscriptions_in_group(mewnet_subs* db, int64_t group_id) {
-    return load_subscriptions(db, group_id, true);
+    return load_subscriptions_impl(db, group_id, true, 0, 0);
+}
+
+mewnet_subscription_list mewnet_subs_load_subscriptions_page(mewnet_subs* db, int64_t group_id,
+                                                             size_t limit, size_t offset) {
+    if (limit == 0) {
+        limit = 50;
+    }
+    if (limit > 1000) {
+        limit = 1000;
+    }
+    return load_subscriptions_impl(db, group_id, true, limit, offset);
+}
+
+mewnet_error mewnet_subs_count_subscriptions(mewnet_subs* db, int64_t group_id,
+                                             int64_t* out_count) {
+    if (db == NULL || out_count == NULL) {
+        return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db and out_count are required");
+    }
+    *out_count = 0;
+    sqlite3_stmt* stmt = NULL;
+    mewnet_error err;
+    subs_clear_error(&err);
+    const char* sql_all = "SELECT COUNT(*) FROM subscriptions";
+    const char* sql_group = "SELECT COUNT(*) FROM subscriptions WHERE group_id=?";
+    if (subs_db_prepare(db->db, &stmt, group_id > 0 ? sql_group : sql_all, &err) != 0) {
+        return err;
+    }
+    if (group_id > 0) {
+        sqlite3_bind_int64(stmt, 1, group_id);
+    }
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        *out_count = sqlite3_column_int64(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return subs_make_error(MEWNET_ERROR_NONE, "");
+}
+
+mewnet_error mewnet_subs_max_last_fetch(mewnet_subs* db, int64_t group_id,
+                                        int64_t* out_value) {
+    if (db == NULL || out_value == NULL) {
+        return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db and out_value are required");
+    }
+    *out_value = 0;
+    sqlite3_stmt* stmt = NULL;
+    mewnet_error err;
+    subs_clear_error(&err);
+    const char* sql_all = "SELECT COALESCE(MAX(last_fetch_at),0) FROM subscriptions";
+    const char* sql_group =
+        "SELECT COALESCE(MAX(last_fetch_at),0) FROM subscriptions WHERE group_id=?";
+    if (subs_db_prepare(db->db, &stmt, group_id > 0 ? sql_group : sql_all, &err) != 0) {
+        return err;
+    }
+    if (group_id > 0) {
+        sqlite3_bind_int64(stmt, 1, group_id);
+    }
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        *out_value = sqlite3_column_int64(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    return subs_make_error(MEWNET_ERROR_NONE, "");
+}
+
+mewnet_error mewnet_subs_next_subscription_id(mewnet_subs* db, int64_t group_id,
+                                              bool unfetched_only, int64_t* out_id) {
+    if (db == NULL || out_id == NULL) {
+        return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db and out_id are required");
+    }
+    *out_id = 0;
+    sqlite3_stmt* stmt = NULL;
+    mewnet_error err;
+    subs_clear_error(&err);
+    const char* sql_unfetched =
+        "SELECT id FROM subscriptions WHERE group_id=? AND enabled=1"
+        " AND last_fetch_at IS NULL"
+        " ORDER BY failure_count ASC, id ASC LIMIT 1";
+    const char* sql_next =
+        "SELECT id FROM subscriptions WHERE group_id=? AND enabled=1"
+        " ORDER BY COALESCE(last_fetch_at,0) ASC, failure_count ASC, id ASC LIMIT 1";
+    if (subs_db_prepare(db->db, &stmt, unfetched_only ? sql_unfetched : sql_next, &err) != 0) {
+        return err;
+    }
+    sqlite3_bind_int64(stmt, 1, group_id);
+    int rc = sqlite3_step(stmt);
+    if (rc == SQLITE_ROW) {
+        *out_id = sqlite3_column_int64(stmt, 0);
+    }
+    sqlite3_finalize(stmt);
+    if (rc == SQLITE_DONE) {
+        return subs_make_error(MEWNET_ERROR_NOT_FOUND, "no subscription found");
+    }
+    if (rc != SQLITE_ROW) {
+        return subs_db_error(db->db, "select next subscription");
+    }
+    return subs_make_error(MEWNET_ERROR_NONE, "");
 }
 
 void mewnet_subs_unload_subscriptions(mewnet_subscription_list list) {
@@ -1066,7 +1587,9 @@ mewnet_error mewnet_subs_add_proxy(mewnet_subs* db, int64_t group_id,
     }
 
     uint8_t hash[32];
+    uint8_t identity[32];
     subs_link_hash(link, hash);
+    subs_link_identity(link, identity);
     char name[MEWNET_NAME_MAX];
     char protocol[MEWNET_TYPE_MAX];
     char server[MEWNET_HOST_MAX];
@@ -1075,10 +1598,12 @@ mewnet_error mewnet_subs_add_proxy(mewnet_subs* db, int64_t group_id,
                    server, sizeof(server), &port);
 
     if (subs_db_prepare(db->db, &stmt,
-                        "INSERT INTO proxies(group_id,link,link_hash,name,protocol,server,port,manual)"
-                        " VALUES(?,?,?,?,?,?,?,1)"
-                        " ON CONFLICT(group_id,link_hash) DO UPDATE SET"
+                        "INSERT INTO proxies(group_id,link,link_hash,identity_hash,"
+                        "name,protocol,server,port,manual)"
+                        " VALUES(?,?,?,?,?,?,?,?,1)"
+                        " ON CONFLICT DO UPDATE SET"
                         " link=excluded.link,"
+                        " identity_hash=excluded.identity_hash,"
                         " name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE proxies.name END,"
                         " protocol=CASE WHEN excluded.protocol<>'' THEN excluded.protocol ELSE proxies.protocol END,"
                         " server=CASE WHEN excluded.server<>'' THEN excluded.server ELSE proxies.server END,"
@@ -1090,10 +1615,11 @@ mewnet_error mewnet_subs_add_proxy(mewnet_subs* db, int64_t group_id,
     sqlite3_bind_int64(stmt, 1, group_id);
     subs_db_bind_text(stmt, 2, link);
     subs_db_bind_blob(stmt, 3, hash, (int)sizeof(hash));
-    subs_db_bind_text(stmt, 4, name);
-    subs_db_bind_text(stmt, 5, protocol);
-    subs_db_bind_text(stmt, 6, server);
-    sqlite3_bind_int(stmt, 7, port);
+    subs_db_bind_blob(stmt, 4, identity, (int)sizeof(identity));
+    subs_db_bind_text(stmt, 5, name);
+    subs_db_bind_text(stmt, 6, protocol);
+    subs_db_bind_text(stmt, 7, server);
+    sqlite3_bind_int(stmt, 8, port);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) {

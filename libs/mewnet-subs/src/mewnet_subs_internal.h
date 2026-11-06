@@ -28,6 +28,7 @@ typedef pthread_mutex_t mewnet_mutex;
 
 struct mewnet_subs {
     sqlite3* db;
+    char db_path[4096];
     char user_agent[256];
     char test_url[MEWNET_URL_MAX];
     char test_expected[64];
@@ -39,6 +40,7 @@ struct mewnet_subs {
     mewnet_mutex rate_lock;
     int64_t next_request_ms;
     unsigned int rng;
+    volatile int cancel_fetch;
 };
 
 /* Error helpers. */
@@ -97,6 +99,8 @@ void subs_sha256(const void* data, size_t len, uint8_t out[32]);
 
 /* Config identity: full link without the display-name fragment. */
 void subs_link_hash(const char* link, uint8_t out[32]);
+/* Protocol+host+port+credentials identity (SHA-256). */
+void subs_link_identity(const char* link, uint8_t out[32]);
 
 /* Rate limiting. */
 int64_t subs_rate_limit_wait(mewnet_subs* db);

@@ -125,6 +125,27 @@ int main(void) {
     check(events == 4, "test events");
     mewnet_subs_remove_proxy(db, proxy_id);
 
+    /* Identity dedup: same protocol/host/port/credentials, different name and
+     * transport options, is one proxy. A different UUID is a different proxy. */
+    const char* same_a = "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@127.0.0.1:443"
+                         "?encryption=none&security=tls&type=ws#one";
+    const char* same_b = "vless://aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee@127.0.0.1:443"
+                         "?encryption=none&security=reality&type=grpc#two";
+    const char* other = "vless://bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee@127.0.0.1:443"
+                        "?encryption=none#three";
+    check(mewnet_subs_add_proxy(db, group_id, same_a).code == MEWNET_ERROR_NONE, "dedup add a");
+    check(mewnet_subs_add_proxy(db, group_id, same_b).code == MEWNET_ERROR_NONE, "dedup add b");
+    mewnet_subs_count_proxies(db, group_id, &count);
+    check(count == 1, "dedup same identity");
+    check(mewnet_subs_add_proxy(db, group_id, other).code == MEWNET_ERROR_NONE, "dedup add other");
+    mewnet_subs_count_proxies(db, group_id, &count);
+    check(count == 2, "dedup different credentials");
+    mewnet_subs_proxy_list dedup_list = mewnet_subs_load_proxies(db, group_id, 10, 0);
+    for (size_t i = 0; i < dedup_list.count; i++) {
+        mewnet_subs_remove_proxy(db, dedup_list.items[i].id);
+    }
+    mewnet_subs_unload_proxies(dedup_list);
+
     err = mewnet_subs_remove_subscription(db, sub_id);
     check(err.code == MEWNET_ERROR_NONE, "add manual");
     int proxies = query_int(raw, "SELECT COUNT(*) FROM proxies");

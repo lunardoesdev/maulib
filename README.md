@@ -30,6 +30,7 @@ libs/mewnet/       Go-ядро, c-shared libmewnet
 libs/mewnet-subs/  C/CMake библиотека libmewnet_subs + CLI
 apps/gui/          Odin + raylib GUI
 apps/mewnet-gtk/   C + GTK4 control panel
+apps/mewnet-cli/   C CLI/TUI agent
 third_party/       SQLite amalgamation
 tests/             C, Python, e2e
 docs/
@@ -221,7 +222,7 @@ mewnet_task_destroy(task);
 - группирует подписки; по умолчанию есть группа `All` со всеми подписками;
 - дедуплицирует конфиги в пределах группы по полной ссылке без `#name`;
   смена пароля/UUID создаёт новую запись, дедупликации по host нет;
-- хранит числовой `priority` подписки и группы;
+- хранит метаданные подписок; поле `priority` оставлено только для совместимости и не влияет на выбор;
 - тестирует конфиги и ведёт рейтинг `+1/-1` с суточными ограничениями;
 - соблюдает общий лимит запросов (по умолчанию 10 за 240 секунд).
 
@@ -273,10 +274,18 @@ make gtk
 Подробности — в [`apps/mewnet-gtk/README.md`](apps/mewnet-gtk/README.md) и
 [`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md).
 
+CLI/TUI использует тот же библиотечный agent:
+
+```bash
+make cli
+# s — сменить прокси, q — выход
+./build/apps/mewnet-cli/mewnet-cli --db data/mewnet-cli.db --proxy-port 18085
+```
+
 Автотест отказоустойчивости (офлайн, локальные прокси):
 
 ```bash
-make test-gtk-agent
+make test-agent
 ```
 
 ## GUI на Odin
@@ -322,7 +331,7 @@ make test-stress     # 100 циклов add/remove, утечки FD/goroutine/RS
 make xray            # скачать Xray для e2e (в /tmp, не коммитится)
 make test-e2e        # локальный Xray + VLESS + mixed inbound
 make test-e2e-links  # 4 прокси, hot-swap, конкурентные пинги
-make test-gtk-agent  # офлайн failover/recovery тест GTK-движка
+make test-agent  # офлайн failover/recovery тест agent
 make test-c-ping-local                          # ping из C, локальный Xray
 make test-c-ping MEWNET_TEST_VLESS='vless://...' # ping из C, реальная ссылка
 ```

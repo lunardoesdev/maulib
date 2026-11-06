@@ -52,18 +52,15 @@ mewnet_subs_batch_test_result mewnet_subs_test_batch(mewnet_subs* db, mewnet_ins
     if (subs_db_prepare(db->db, &stmt,
                         "SELECT q.id, q.link FROM ("
                         " SELECT p.id AS id, p.link AS link, p.rating AS rating,"
-                        " p.last_tested_at AS last_tested_at,"
-                        " MAX(COALESCE(s.priority,0)) AS source_priority"
+                        " p.last_tested_at AS last_tested_at"
                         " FROM proxies p"
-                        " LEFT JOIN proxy_sources ps ON ps.proxy_id=p.id"
-                        " LEFT JOIN subscriptions s ON s.id=ps.subscription_id"
                         " WHERE p.group_id=? AND (p.last_tested_at IS NULL OR p.alive=0)"
                         " GROUP BY p.id"
                         ") q"
                         " ORDER BY CASE WHEN q.last_tested_at IS NULL THEN 0 ELSE 1 END,"
                         " pow("
                         " ((random() & 9223372036854775807) / 9223372036854775807.0),"
-                        " 1.0 / (1.0 + max(0, q.source_priority) + max(0, q.rating + 10))"
+                        " 1.0 / (1.0 + max(0, q.rating + 10))"
                         " ) DESC LIMIT ?",
                         &err) != 0) {
         result.error = err;

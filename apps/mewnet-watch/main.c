@@ -145,9 +145,8 @@ int main(int argc, char** argv) {
     }
     mewnet_subs* db = opened.db;
 
-    int priority = 1000;
     for (int i = first_url; i < argc; i++) {
-        mewnet_error err = mewnet_subs_add_subscription(db, argv[i], priority--, NULL);
+        mewnet_error err = mewnet_subs_add_subscription(db, argv[i], 0, NULL);
         if (err.code != MEWNET_ERROR_NONE) {
             fprintf(stderr, "add subscription: %s\n", err.message);
             return 1;

@@ -22,20 +22,15 @@ static int select_candidate(mewnet_subs* db, mewnet_subs_candidate_scope scope,
     char sql[1024];
     snprintf(sql, sizeof(sql),
              "SELECT q.id, q.link FROM ("
-             " SELECT p.id AS id, p.link AS link, p.rating AS rating,"
-             " g.priority AS group_priority,"
-             " MAX(COALESCE(s.priority,0)) AS source_priority"
+             " SELECT p.id AS id, p.link AS link, p.rating AS rating"
              " FROM proxies p"
              " JOIN subscription_groups g ON g.id=p.group_id"
-             " LEFT JOIN proxy_sources ps ON ps.proxy_id=p.id"
-             " LEFT JOIN subscriptions s ON s.id=ps.subscription_id"
              " WHERE g.enabled=1%s"
              " GROUP BY p.id"
              ") q"
              " ORDER BY pow("
              " ((random() & 9223372036854775807) / 9223372036854775807.0),"
-             " 1.0 / (1.0 + max(0, q.group_priority)"
-             " + max(0, q.source_priority) + max(0, q.rating + 10))"
+             " 1.0 / (1.0 + max(0, q.rating + 10))"
              " ) DESC LIMIT 1",
              candidate_filter(scope));
     sqlite3_stmt* stmt = NULL;

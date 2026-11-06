@@ -19,7 +19,7 @@ export CGO_ENABLED = 1
 
 LDFLAGS = -s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33
 
-.PHONY: all deps build build-mingw-core subs subs-mingw gui gtk watch test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links test-gtk-agent clean xray
+.PHONY: all deps build build-mingw-core subs subs-mingw gui gtk cli watch test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links test-gtk-agent clean xray
 
 all: build
 
@@ -78,9 +78,16 @@ GTK_DB ?= data/mewnet-gtk.db
 gtk: subs
 	./build/apps/mewnet-gtk/mewnet-gtk --db $(GTK_DB)
 
-# Offline failover/recovery test for the GTK discovery engine.
-test-gtk-agent: subs
+CLI_DB ?= data/mewnet-cli.db
+
+cli: subs
+	./build/apps/mewnet-cli/mewnet-cli --db $(CLI_DB)
+
+# Offline failover/recovery test for the discovery agent.
+test-agent: subs
 	$(PYTHON) tests/e2e/run_gtk_agent.py
+
+test-gtk-agent: test-agent
 
 gui: subs
 	mkdir -p build/gui/syslib

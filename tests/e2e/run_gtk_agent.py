@@ -29,7 +29,7 @@ from urllib.parse import urlsplit
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-BIN = os.environ.get("MEWNET_GTK_BIN", os.path.join(ROOT, "build", "apps", "mewnet-gtk", "mewnet-gtk"))
+BIN = os.environ.get("MEWNET_CLI_BIN", os.path.join(ROOT, "build", "apps", "mewnet-cli", "mewnet-cli"))
 
 PASSED = []
 FAILED = []

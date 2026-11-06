@@ -50,6 +50,14 @@ mewnet_delay_result mewnet_test_link(mewnet_instance* instance,
                                    const char* uri,
                                    const mewnet_delay_options* options);
 
+/*
+ * Stable identity of a share link: protocol + server + port + credentials.
+ * Names, #fragments and transport-only options do not affect it, so the same
+ * server/account from different subscriptions produces the same hash.
+ * `hash` is the raw 32-byte SHA-256 digest.
+ */
+mewnet_fingerprint_result mewnet_link_fingerprint(const char* uri);
+
 /* Parse and test a raw share link, returning metadata and a detailed error. */
 mewnet_link_test_result mewnet_test_link_info(mewnet_instance* instance,
                                             const char* uri,
