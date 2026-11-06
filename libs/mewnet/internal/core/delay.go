@@ -4,6 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/metacubex/mihomo/adapter"
@@ -134,7 +138,7 @@ func (c *Core) TestLinkContext(ctx context.Context, link string, opts DelayOptio
 	testCtx, cancel := context.WithTimeout(ctx, resolved.timeout)
 	defer cancel()
 
-	delay, err := safeURLTest(testCtx, proxy, resolved.url, resolved.expected)
+	delay, err := safeURLTestGet(testCtx, proxy, resolved.url, resolved.expected)
 	if err != nil {
 		return nil, err
 	}
@@ -157,6 +161,85 @@ func (c *Core) TestDelayAsync(name string, opts DelayOptions, cb func(TaskSnapsh
 	return c.tasks.start(TaskKindDelay, nil, func(ctx context.Context) (any, error) {
 		return c.testDelayWithContext(ctx, name, opts)
 	}, cb)
+}
+
+// safeURLTestGet is the GET variant of safeURLTest. Discovery uses it because
+// many broken proxies answer HEAD but fail a real GET/TLS request.
+func safeURLTestGet(ctx context.Context, proxy C.Proxy, target string, expected utils.IntRanges[uint16]) (delay uint16, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic during GET test: %v", r)
+		}
+	}()
+
+	parsed, err := url.Parse(target)
+	if err != nil {
+		return 0, err
+	}
+	port := parsed.Port()
+	if port == "" {
+		switch parsed.Scheme {
+		case "https":
+			port = "443"
+		case "http":
+			port = "80"
+		default:
+			return 0, fmt.Errorf("unsupported URL scheme %q", parsed.Scheme)
+		}
+	}
+	var metadata C.Metadata
+	if err := metadata.SetRemoteAddress(net.JoinHostPort(parsed.Hostname(), port)); err != nil {
+		return 0, err
+	}
+
+	instance, err := proxy.DialContext(ctx, &metadata)
+	if err != nil {
+		return 0, fmt.Errorf("delay test failed: %w", err)
+	}
+	defer instance.Close()
+
+	transport := &http.Transport{
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			return instance, nil
+		},
+		MaxIdleConns:          1,
+		IdleConnTimeout:       time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+		DisableKeepAlives:     true,
+	}
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	defer client.CloseIdleConnections()
+
+	start := time.Now()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("delay test failed: %w", err)
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	resp.Body.Close()
+	elapsed := time.Since(start)
+	if elapsed <= 0 {
+		elapsed = time.Millisecond
+	}
+	if elapsed > time.Duration(^uint16(0))*time.Millisecond {
+		elapsed = time.Duration(^uint16(0)) * time.Millisecond
+	}
+	status := uint16(resp.StatusCode)
+	if !expected.Check(status) {
+		return 0, fmt.Errorf("delay test failed: unexpected status %d", resp.StatusCode)
+	}
+	return uint16(elapsed / time.Millisecond), nil
 }
 
 func safeURLTest(ctx context.Context, proxy C.Proxy, url string, expected utils.IntRanges[uint16]) (delay uint16, err error) {

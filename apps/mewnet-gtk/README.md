@@ -63,8 +63,8 @@ Full specification and failure matrix:
 --health-timeout MS    active proxy health check timeout (default 2500)
 --health-url URL       health check URL (default https://lua.org)
 --health-expected CODE expected health status (default 200)
---test-url URL         discovery test URL
---test-expected CODE   discovery expected status (default 204)
+--test-url URL         discovery test URL (default https://lua.org)
+--test-expected CODE   discovery expected status (default 200)
 --screenshot PATH      render the window to PNG and exit (UI smoke test)
 ```
 

@@ -866,8 +866,8 @@ static void options_init(Options* options) {
     options->health_timeout_ms = 2500;
     options->health_url = g_strdup("https://lua.org");
     options->health_expected = g_strdup("200");
-    options->test_url = g_strdup("https://www.gstatic.com/generate_204");
-    options->test_expected = g_strdup("204");
+    options->test_url = g_strdup("https://lua.org");
+    options->test_expected = g_strdup("200");
     options->urls = g_ptr_array_new_with_free_func(g_free);
 }
 
