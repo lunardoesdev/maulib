@@ -178,7 +178,29 @@ typedef struct mewnet_subs_fetch_result {
 } mewnet_subs_fetch_result;
 
 MEWNET_SUBS_API mewnet_subs_fetch_result mewnet_subs_fetch(mewnet_subs* db, int64_t subscription_id);
+/* Fetch without waiting for the shared request limiter (discovery fallback). */
+MEWNET_SUBS_API mewnet_subs_fetch_result mewnet_subs_fetch_now(mewnet_subs* db, int64_t subscription_id);
 MEWNET_SUBS_API mewnet_subs_fetch_result mewnet_subs_fetch_due(mewnet_subs* db);
+
+/* Discovery batch testing. */
+typedef struct mewnet_subs_batch_test_result {
+    mewnet_error error;
+    size_t tested;
+    size_t alive;
+    int64_t first_alive_proxy_id;
+    char first_alive_link[MEWNET_LINK_MAX];
+    char first_alive_name[MEWNET_NAME_MAX];
+} mewnet_subs_batch_test_result;
+
+MEWNET_SUBS_API mewnet_subs_batch_test_result mewnet_subs_test_batch(
+    mewnet_subs* db, mewnet_instance* milib, int64_t group_id,
+    size_t limit, size_t concurrency);
+MEWNET_SUBS_API mewnet_error mewnet_subs_count_untested(mewnet_subs* db, int64_t group_id,
+                                                        int64_t* out_count);
+MEWNET_SUBS_API mewnet_error mewnet_subs_count_alive(mewnet_subs* db, int64_t group_id,
+                                                     int64_t* out_count);
+MEWNET_SUBS_API mewnet_error mewnet_subs_first_alive(mewnet_subs* db, int64_t group_id,
+                                                     mewnet_subs_proxy* out);
 
 /* Testing and rating. */
 typedef struct mewnet_subs_test_result {

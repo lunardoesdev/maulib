@@ -55,6 +55,18 @@ mewnet_link_test_result mewnet_test_link_info(mewnet_instance* instance,
                                             const char* uri,
                                             const mewnet_delay_options* options);
 
+/*
+ * Test many links concurrently. `links` is an array of `count` C strings.
+ * concurrency <= 0 means 1; it is capped at 256. The returned items array is
+ * owned by the caller and released with mewnet_unload_batch_test().
+ */
+mewnet_batch_test_result mewnet_test_links_batch(mewnet_instance* instance,
+                                                 const char* const* links,
+                                                 size_t count,
+                                                 const mewnet_delay_options* options,
+                                                 size_t concurrency);
+void mewnet_unload_batch_test(mewnet_batch_test_result result);
+
 /* SharedVPNLink. */
 mewnet_link_options mewnet_link_options_default(void);
 mewnet_link_result mewnet_link_create(mewnet_instance* instance,

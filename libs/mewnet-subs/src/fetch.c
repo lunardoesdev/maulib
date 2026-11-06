@@ -484,7 +484,7 @@ static int update_subscription_failure(mewnet_subs* db, int64_t id, int failure_
     return 0;
 }
 
-mewnet_subs_fetch_result mewnet_subs_fetch(mewnet_subs* db, int64_t subscription_id) {
+static mewnet_subs_fetch_result fetch_impl(mewnet_subs* db, int64_t subscription_id, bool wait) {
     mewnet_subs_fetch_result result;
     memset(&result, 0, sizeof(result));
     result.subscription_id = subscription_id;
@@ -498,9 +498,11 @@ mewnet_subs_fetch_result mewnet_subs_fetch(mewnet_subs* db, int64_t subscription
         return result;
     }
 
-    result.error = mewnet_subs_rate_limit_wait(db);
-    if (result.error.code != MEWNET_ERROR_NONE) {
-        return result;
+    if (wait) {
+        result.error = mewnet_subs_rate_limit_wait(db);
+        if (result.error.code != MEWNET_ERROR_NONE) {
+            return result;
+        }
     }
 
     mewnet_http_options http_options;
@@ -705,6 +707,14 @@ mewnet_subs_fetch_result mewnet_subs_fetch(mewnet_subs* db, int64_t subscription
     result.skipped = ctx.skipped;
     result.error = subs_make_error(MEWNET_ERROR_NONE, "");
     return result;
+}
+
+mewnet_subs_fetch_result mewnet_subs_fetch(mewnet_subs* db, int64_t subscription_id) {
+    return fetch_impl(db, subscription_id, true);
+}
+
+mewnet_subs_fetch_result mewnet_subs_fetch_now(mewnet_subs* db, int64_t subscription_id) {
+    return fetch_impl(db, subscription_id, false);
 }
 
 mewnet_subs_fetch_result mewnet_subs_fetch_due(mewnet_subs* db) {

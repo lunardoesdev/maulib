@@ -146,6 +146,22 @@ func fillPingResult(dst *C.mewnet_ping_result, src core.PingResult, err error) {
 	dst.delay_ms = C.uint(src.Delay)
 }
 
+func fillLinkTestResult(dst *C.mewnet_link_test_result, src core.DelayResult) {
+	*dst = C.mewnet_link_test_result{}
+	dst.ok = true
+	dst.error.code = C.MEWNET_ERROR_NONE
+	copyCString(dst.name[:], src.Name)
+	copyCString(dst.proxy_type[:], src.Type)
+	copyCString(dst.server[:], src.Server)
+	dst.port = C.int(src.Port)
+	dst.delay_ms = C.uint(src.Delay)
+}
+
+func failLinkTestResult(dst *C.mewnet_link_test_result, err error) {
+	*dst = C.mewnet_link_test_result{}
+	setCError(&dst.error, err)
+}
+
 func failPingResult(dst *C.mewnet_ping_result, err error) {
 	*dst = C.mewnet_ping_result{}
 	dst.error = cErrorCode(err)

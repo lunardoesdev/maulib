@@ -220,6 +220,14 @@ typedef struct mewnet_link_test_result {
     unsigned delay_ms;
 } mewnet_link_test_result;
 
+/* Batch link testing. */
+typedef struct mewnet_batch_test_result {
+    bool ok;
+    mewnet_error error;
+    mewnet_link_test_result* items;
+    size_t count;
+} mewnet_batch_test_result;
+
 /* Streaming HTTP. */
 typedef int (*mewnet_http_cb)(const void* data, size_t len, void* user);
 

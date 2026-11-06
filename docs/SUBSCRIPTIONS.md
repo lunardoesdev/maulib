@@ -230,6 +230,36 @@ mewnet_http_stream
 
 Тело подписки и список всех ссылок в памяти не держатся.
 
+## Discovery CLI: `mewnet-watch`
+
+```bash
+./build/apps/mewnet-watch/mewnet-watch --db data/watch.db --proxy-port 18085 \
+  --batch 70 --concurrency 70 \
+  https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
+```
+
+Поведение:
+
+- создаёт SQLite;
+- добавляет подписки в `All`;
+- пока нет alive-узла, тестирует непроверенные конфиги пачками по 70
+  одновременно;
+- при нахождении alive добавляет его в `MILIB`, выбирает и печатает
+  `PROXY http://127.0.0.1:<port>` + `READY`;
+- дальше discovery идёт через стандартный rate limiter;
+- обновляет максимум одну подписку в час; если непроверенных узлов нет и
+  рабочих нет — обновляет следующую немедленно.
+
+Библиотечные API для этого:
+
+- `mewnet_test_links_batch` / `mewnet_unload_batch_test` в `libmewnet`;
+- `mewnet_subs_test_batch` — выбрать непроверенные, проверить пачкой,
+  записать результаты и вернуть первый alive;
+- `mewnet_subs_count_untested`, `mewnet_subs_count_alive`,
+  `mewnet_subs_first_alive`;
+- `mewnet_subs_fetch_now` — fetch без ожидания rate limiter для аварийного
+  обновления.
+
 ## C API
 
 ```c

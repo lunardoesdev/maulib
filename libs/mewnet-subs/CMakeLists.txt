@@ -33,7 +33,8 @@ add_library(mewnet_subs SHARED
     src/base64.c
     src/sha256.c
     src/fetch.c
-    src/rating.c)
+    src/rating.c
+    src/batch.c)
 
 target_include_directories(mewnet_subs
     PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include" "${MEWNET_ROOT}/libs/mewnet/include"
@@ -49,7 +50,8 @@ set_target_properties(mewnet_subs PROPERTIES
     BUILD_RPATH "${MEWNET_ROOT}/dist"
     INSTALL_RPATH "$ORIGIN")
 
-target_link_libraries(mewnet_subs PRIVATE sqlite3 "${MEWNET_LIBRARY}")
+target_link_libraries(mewnet_subs PUBLIC "${MEWNET_LIBRARY}")
+target_link_libraries(mewnet_subs PRIVATE sqlite3)
 if(NOT WIN32)
     target_link_libraries(mewnet_subs PRIVATE pthread m dl)
 endif()

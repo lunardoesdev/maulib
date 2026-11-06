@@ -232,6 +232,24 @@ make subs
 
 Подробности — в [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
 
+## CLI discovery: `mewnet-watch`
+
+```bash
+make subs
+./build/apps/mewnet-watch/mewnet-watch \
+  --db data/watch.db --proxy-port 18085 \
+  --batch 70 --concurrency 70 \
+  https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
+```
+
+Пока рабочий узел не найден, утилита проверяет по 70 прокси одновременно.
+Когда найден — печатает `PROXY http://127.0.0.1:<port>` и `READY`, добавляет
+узел в `MILIB` и продолжает discovery с обычным rate limit. Подписки
+обновляются не чаще одной в час, либо сразу, если проверять больше нечего и
+рабочих узлов нет.
+
+Подробности — в [`apps/mewnet-watch/README.md`](apps/mewnet-watch/README.md).
+
 ## GUI на Odin
 
 Есть простая raylib-программа:

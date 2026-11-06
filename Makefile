@@ -19,7 +19,7 @@ export CGO_ENABLED = 1
 
 LDFLAGS = -s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33
 
-.PHONY: all deps build build-mingw-core subs subs-mingw gui test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
+.PHONY: all deps build build-mingw-core subs subs-mingw gui watch test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links clean xray
 
 all: build
 
@@ -66,6 +66,12 @@ test-e2e-subs: subs
 
 # Odin/raylib GUI. System libX11 has no unversioned dev symlink here, so the
 # target creates a small local symlink directory for the linker.
+WATCH_DB ?= data/mewnet-watch.db
+WATCH_SUBS ?= https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
+
+watch: subs
+	./build/apps/mewnet-watch/mewnet-watch --db $(WATCH_DB) --proxy-port 18085 $(WATCH_SUBS)
+
 gui: subs
 	mkdir -p build/gui/syslib
 	ln -sf "$(X11_LIB)" build/gui/syslib/libX11.so

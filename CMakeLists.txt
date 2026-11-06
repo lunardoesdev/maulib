@@ -7,3 +7,4 @@ set(CMAKE_C_EXTENSIONS ON)
 
 enable_testing()
 add_subdirectory(libs/mewnet-subs)
+add_subdirectory(apps/mewnet-watch)

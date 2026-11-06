@@ -65,6 +65,15 @@ int main(void) {
 
     r = mewnet_subs_record_test(db, proxy_id, true, 42, "");
     check(r.error.code == MEWNET_ERROR_NONE && r.rating_delta == 1 && r.rating_after == 1, "rating +1");
+    int64_t untested = -1;
+    int64_t alive_count = -1;
+    check(mewnet_subs_count_untested(db, group_id, &untested).code == MEWNET_ERROR_NONE && untested == 0,
+          "count untested");
+    check(mewnet_subs_count_alive(db, group_id, &alive_count).code == MEWNET_ERROR_NONE && alive_count == 1,
+          "count alive");
+    mewnet_subs_proxy first_alive;
+    check(mewnet_subs_first_alive(db, group_id, &first_alive).code == MEWNET_ERROR_NONE &&
+          first_alive.id == proxy_id, "first alive");
     r = mewnet_subs_record_test(db, proxy_id, true, 43, "");
     check(r.error.code == MEWNET_ERROR_NONE && r.rating_delta == 0 && r.rating_after == 1, "rating +1 daily cap");
     r = mewnet_subs_record_test(db, proxy_id, false, 0, "boom");
