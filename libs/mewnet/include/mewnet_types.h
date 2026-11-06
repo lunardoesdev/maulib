@@ -220,6 +220,13 @@ typedef struct mewnet_link_test_result {
     unsigned delay_ms;
 } mewnet_link_test_result;
 
+typedef struct mewnet_probe_result {
+    bool ok;
+    mewnet_error error;
+    int status;
+    unsigned delay_ms;
+} mewnet_probe_result;
+
 typedef struct mewnet_fingerprint_result {
     bool ok;
     mewnet_error error;

@@ -58,6 +58,12 @@ mewnet_delay_result mewnet_test_link(mewnet_instance* instance,
  */
 mewnet_fingerprint_result mewnet_link_fingerprint(const char* uri);
 
+/* GET a URL through the local mixed inbound (real client path). */
+mewnet_probe_result mewnet_probe(mewnet_instance* instance,
+                                 const char* url,
+                                 int expected_status,
+                                 int timeout_ms);
+
 /* Parse and test a raw share link, returning metadata and a detailed error. */
 mewnet_link_test_result mewnet_test_link_info(mewnet_instance* instance,
                                             const char* uri,

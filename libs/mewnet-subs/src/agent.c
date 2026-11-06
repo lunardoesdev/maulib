@@ -14,6 +14,7 @@
 struct mewnet_agent {
     mewnet_agent_config cfg;
     mewnet_subs* fetch_db;
+    mewnet_subs* discovery_db;
     char health_url[MEWNET_URL_MAX];
     char health_expected[64];
     mewnet_agent_callbacks callbacks;
@@ -22,6 +23,7 @@ struct mewnet_agent {
     bool stop;
     bool switch_requested;
     bool emergency_fetch;
+    bool pool_batch_requested;
     int64_t pending_fetch_id;
 
     int64_t current_id;
@@ -47,12 +49,15 @@ struct mewnet_agent {
 #ifdef _WIN32
     HANDLE thread;
     HANDLE fetch_thread;
+    HANDLE discovery_thread;
 #else
     pthread_t thread;
     pthread_t fetch_thread;
+    pthread_t discovery_thread;
 #endif
     bool thread_started;
     bool fetch_thread_started;
+    bool discovery_thread_started;
 };
 
 mewnet_agent_config mewnet_agent_config_default(void) {
@@ -215,11 +220,9 @@ static bool agent_health_check(mewnet_agent* agent) {
     if (name[0] == '\0') {
         return false;
     }
-    mewnet_delay_options options = mewnet_delay_options_default();
-    options.url = agent->health_url;
-    options.timeout_ms = agent->cfg.health_timeout_ms;
-    options.expected = agent->health_expected;
-    mewnet_delay_result result = mewnet_test_delay(agent->cfg.milib, name, &options);
+    int expected = atoi(agent->health_expected);
+    mewnet_probe_result result = mewnet_probe(agent->cfg.milib, agent->health_url,
+                                              expected, agent->cfg.health_timeout_ms);
     return result.ok;
 }
 
@@ -290,6 +293,13 @@ static mewnet_subs_proxy agent_get_proxy(mewnet_agent* agent, int64_t id) {
     return proxy;
 }
 
+static bool agent_run_batch_db(mewnet_agent* agent, mewnet_subs* db,
+                               const char* reason, bool route_found);
+
+static bool agent_run_batch(mewnet_agent* agent, const char* reason, bool route_found) {
+    return agent_run_batch_db(agent, agent->cfg.db, reason, route_found);
+}
+
 static bool agent_route_by_id(mewnet_agent* agent, int64_t id) {
     mewnet_subs_proxy proxy = agent_get_proxy(agent, id);
     if (proxy.id == 0) {
@@ -298,9 +308,10 @@ static bool agent_route_by_id(mewnet_agent* agent, int64_t id) {
     return agent_route(agent, &proxy);
 }
 
-static bool agent_run_batch(mewnet_agent* agent, const char* reason, bool route_found) {
+static bool agent_run_batch_db(mewnet_agent* agent, mewnet_subs* db,
+                               const char* reason, bool route_found) {
     mewnet_subs_batch_test_result tested =
-        mewnet_subs_test_batch(agent->cfg.db, agent->cfg.milib, agent->cfg.group_id,
+        mewnet_subs_test_batch(db, agent->cfg.milib, agent->cfg.group_id,
                                agent->cfg.batch, agent->cfg.concurrency);
     if (tested.error.code != MEWNET_ERROR_NONE) {
         agent_log(agent, "BATCH FAILED reason=%s: %s", reason, tested.error.message);
@@ -476,6 +487,58 @@ static void* agent_fetch_thread(void* data) {
     return NULL;
 }
 
+static void* agent_discovery_thread(void* data) {
+    mewnet_agent* agent = (mewnet_agent*)data;
+    int64_t next_discover = subs_now_ms();
+    while (!agent_stopped(agent)) {
+        subs_mutex_lock(&agent->lock);
+        bool pool_batch = agent->pool_batch_requested;
+        agent->pool_batch_requested = false;
+        subs_mutex_unlock(&agent->lock);
+
+        int64_t alive = 0;
+        mewnet_subs_count_alive(agent->discovery_db, agent->cfg.group_id, &alive);
+        if (alive == 0) {
+            agent_sleep(agent, 500);
+            continue;
+        }
+        if (pool_batch) {
+            agent_run_batch_db(agent, agent->discovery_db, "pool", false);
+            next_discover = subs_now_ms() + 1500;
+            continue;
+        }
+        int64_t now = subs_now_ms();
+        if (now < next_discover) {
+            agent_sleep(agent, 200);
+            continue;
+        }
+        int64_t interval = alive < agent->cfg.pool_target
+                               ? 2000
+                               : (int64_t)agent->cfg.slow_interval_sec * 1000;
+        next_discover = now + interval;
+
+        mewnet_subs_test_result result = mewnet_subs_test_candidate_now(
+            agent->discovery_db, agent->cfg.milib, MEWNET_SUBS_CANDIDATE_UNTESTED);
+        if (result.error.code == MEWNET_ERROR_NOT_FOUND) {
+            result = mewnet_subs_test_candidate_now(
+                agent->discovery_db, agent->cfg.milib, MEWNET_SUBS_CANDIDATE_NOT_ALIVE);
+        }
+        agent_invalidate_counts(agent);
+        if (result.error.code == MEWNET_ERROR_NONE) {
+            agent_log(agent, "TEST id=%lld alive=%d delay=%u rating=%d->%d",
+                      (long long)result.proxy_id, result.alive ? 1 : 0,
+                      result.delay_ms, result.rating_before, result.rating_after);
+            if (result.alive) {
+                agent_log(agent, "DISCOVERED id=%lld delay=%u",
+                          (long long)result.proxy_id, result.delay_ms);
+            }
+        } else if (result.error.code != MEWNET_ERROR_NOT_FOUND) {
+            agent_log(agent, "TEST FAILED: %s", result.error.message);
+        }
+    }
+    return NULL;
+}
+
 static void* agent_thread_main(void* data) {
     mewnet_agent* agent = (mewnet_agent*)data;
     int64_t started = subs_now_ms();
@@ -546,10 +609,10 @@ static void* agent_thread_main(void* data) {
                     subs_mutex_unlock(&agent->lock);
                 }
             }
-            if (alive < agent->cfg.pool_target &&
-                now - agent->last_pool_batch_ms >= 10000) {
-                agent->last_pool_batch_ms = now;
-                agent_run_batch(agent, "pool", false);
+            if (alive < agent->cfg.pool_target) {
+                subs_mutex_lock(&agent->lock);
+                agent->pool_batch_requested = true;
+                subs_mutex_unlock(&agent->lock);
             }
             agent->next_health_ms = subs_now_ms() + 1500;
             agent->next_discover_ms = subs_now_ms() + 500;
@@ -607,33 +670,6 @@ static void* agent_thread_main(void* data) {
             continue;
         }
 
-        if (now >= agent->next_discover_ms) {
-            int64_t interval = alive < agent->cfg.pool_target
-                                   ? 2000
-                                   : (int64_t)agent->cfg.slow_interval_sec * 1000;
-            agent->next_discover_ms = now + interval;
-
-            mewnet_subs_test_result result = mewnet_subs_test_candidate_now(
-                agent->cfg.db, agent->cfg.milib, MEWNET_SUBS_CANDIDATE_UNTESTED);
-            if (result.error.code == MEWNET_ERROR_NOT_FOUND) {
-                result = mewnet_subs_test_candidate_now(
-                    agent->cfg.db, agent->cfg.milib, MEWNET_SUBS_CANDIDATE_NOT_ALIVE);
-            }
-            agent_invalidate_counts(agent);
-            if (result.error.code == MEWNET_ERROR_NONE) {
-                agent_log(agent, "TEST id=%lld alive=%d delay=%u rating=%d->%d",
-                          (long long)result.proxy_id, result.alive ? 1 : 0,
-                          result.delay_ms, result.rating_before, result.rating_after);
-                if (result.alive) {
-                    agent_log(agent, "DISCOVERED id=%lld delay=%u",
-                              (long long)result.proxy_id, result.delay_ms);
-                }
-            } else if (result.error.code != MEWNET_ERROR_NOT_FOUND) {
-                agent_log(agent, "TEST FAILED: %s", result.error.message);
-            }
-            continue;
-        }
-
         if (subs_now_ms() - agent->last_state_ms >= 1000) {
             agent_emit_state(agent);
         }
@@ -648,6 +684,11 @@ static void* agent_thread_main(void* data) {
 #ifdef _WIN32
 static DWORD WINAPI agent_thread_win(LPVOID data) {
     agent_thread_main(data);
+    return 0;
+}
+
+static DWORD WINAPI agent_discovery_thread_win(LPVOID data) {
+    agent_discovery_thread(data);
     return 0;
 }
 
@@ -685,7 +726,10 @@ mewnet_agent* mewnet_agent_start(const mewnet_agent_config* config,
              config->health_expected != NULL ? config->health_expected : "204");
     agent->callbacks = callbacks;
     agent->fetch_db = mewnet_subs_clone(agent->cfg.db);
-    if (agent->fetch_db == NULL) {
+    agent->discovery_db = mewnet_subs_clone(agent->cfg.db);
+    if (agent->fetch_db == NULL || agent->discovery_db == NULL) {
+        if (agent->fetch_db) mewnet_subs_close(agent->fetch_db);
+        if (agent->discovery_db) mewnet_subs_close(agent->discovery_db);
         free(agent);
         return NULL;
     }
@@ -695,18 +739,27 @@ mewnet_agent* mewnet_agent_start(const mewnet_agent_config* config,
     agent->fetch_thread = CreateThread(NULL, 0, agent_fetch_thread_win, agent, 0, NULL);
     if (agent->fetch_thread == NULL) {
         mewnet_subs_close(agent->fetch_db);
+        mewnet_subs_close(agent->discovery_db);
         subs_mutex_destroy(&agent->lock);
         free(agent);
         return NULL;
     }
+    agent->discovery_thread = CreateThread(NULL, 0, agent_discovery_thread_win, agent, 0, NULL);
     agent->thread = CreateThread(NULL, 0, agent_thread_win, agent, 0, NULL);
-    if (agent->thread == NULL) {
+    if (agent->thread == NULL || agent->discovery_thread == NULL) {
         subs_mutex_lock(&agent->lock);
         agent->stop = true;
         subs_mutex_unlock(&agent->lock);
-        WaitForSingleObject(agent->fetch_thread, INFINITE);
-        CloseHandle(agent->fetch_thread);
+        if (agent->fetch_thread) {
+            WaitForSingleObject(agent->fetch_thread, INFINITE);
+            CloseHandle(agent->fetch_thread);
+        }
+        if (agent->discovery_thread) {
+            WaitForSingleObject(agent->discovery_thread, INFINITE);
+            CloseHandle(agent->discovery_thread);
+        }
         mewnet_subs_close(agent->fetch_db);
+        mewnet_subs_close(agent->discovery_db);
         subs_mutex_destroy(&agent->lock);
         free(agent);
         return NULL;
@@ -718,12 +771,15 @@ mewnet_agent* mewnet_agent_start(const mewnet_agent_config* config,
         free(agent);
         return NULL;
     }
-    if (pthread_create(&agent->thread, NULL, agent_thread_main, agent) != 0) {
+    if (pthread_create(&agent->discovery_thread, NULL, agent_discovery_thread, agent) != 0 ||
+        pthread_create(&agent->thread, NULL, agent_thread_main, agent) != 0) {
         subs_mutex_lock(&agent->lock);
         agent->stop = true;
         subs_mutex_unlock(&agent->lock);
         pthread_join(agent->fetch_thread, NULL);
+        if (agent->discovery_thread != 0) pthread_join(agent->discovery_thread, NULL);
         mewnet_subs_close(agent->fetch_db);
+        mewnet_subs_close(agent->discovery_db);
         subs_mutex_destroy(&agent->lock);
         free(agent);
         return NULL;
@@ -731,6 +787,7 @@ mewnet_agent* mewnet_agent_start(const mewnet_agent_config* config,
 #endif
     agent->thread_started = true;
     agent->fetch_thread_started = true;
+    agent->discovery_thread_started = true;
     return agent;
 }
 
@@ -753,6 +810,17 @@ void mewnet_agent_stop(mewnet_agent* agent) {
     }
     mewnet_subs_close(agent->fetch_db);
     agent->fetch_db = NULL;
+    if (agent->discovery_thread_started) {
+#ifdef _WIN32
+        WaitForSingleObject(agent->discovery_thread, INFINITE);
+        CloseHandle(agent->discovery_thread);
+#else
+        pthread_join(agent->discovery_thread, NULL);
+#endif
+        agent->discovery_thread_started = false;
+    }
+    mewnet_subs_close(agent->discovery_db);
+    agent->discovery_db = NULL;
     if (agent->thread_started) {
 #ifdef _WIN32
         WaitForSingleObject(agent->thread, INFINITE);
