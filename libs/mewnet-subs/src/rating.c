@@ -8,14 +8,22 @@ static int select_candidate(mewnet_subs* db, int64_t* proxy_id, char* link, size
                             mewnet_error* err) {
     sqlite3_stmt* stmt = NULL;
     if (subs_db_prepare(db->db, &stmt,
-                        "SELECT p.id, p.link FROM proxies p"
+                        "SELECT q.id, q.link FROM ("
+                        " SELECT p.id AS id, p.link AS link, p.rating AS rating,"
+                        " g.priority AS group_priority,"
+                        " MAX(COALESCE(s.priority,0)) AS source_priority"
+                        " FROM proxies p"
                         " JOIN subscription_groups g ON g.id=p.group_id"
                         " LEFT JOIN proxy_sources ps ON ps.proxy_id=p.id"
                         " LEFT JOIN subscriptions s ON s.id=ps.subscription_id"
                         " WHERE g.enabled=1"
                         " GROUP BY p.id"
-                        " ORDER BY g.priority DESC, MAX(COALESCE(s.priority,0)) DESC,"
-                        " p.rating DESC, COALESCE(p.last_tested_at,0) ASC, p.id ASC LIMIT 1",
+                        ") q"
+                        " ORDER BY pow("
+                        " ((random() & 9223372036854775807) / 9223372036854775807.0),"
+                        " 1.0 / (1.0 + max(0, q.group_priority)"
+                        " + max(0, q.source_priority) + max(0, q.rating + 10))"
+                        " ) DESC LIMIT 1",
                         err) != 0) {
         return -1;
     }

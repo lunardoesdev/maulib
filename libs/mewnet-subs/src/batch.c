@@ -50,12 +50,19 @@ mewnet_subs_batch_test_result mewnet_subs_test_batch(mewnet_subs* db, mewnet_ins
     subs_clear_error(&err);
     sqlite3_stmt* stmt = NULL;
     if (subs_db_prepare(db->db, &stmt,
-                        "SELECT p.id, p.link FROM proxies p"
+                        "SELECT q.id, q.link FROM ("
+                        " SELECT p.id AS id, p.link AS link, p.rating AS rating,"
+                        " MAX(COALESCE(s.priority,0)) AS source_priority"
+                        " FROM proxies p"
                         " LEFT JOIN proxy_sources ps ON ps.proxy_id=p.id"
                         " LEFT JOIN subscriptions s ON s.id=ps.subscription_id"
                         " WHERE p.group_id=? AND p.last_tested_at IS NULL"
                         " GROUP BY p.id"
-                        " ORDER BY MAX(COALESCE(s.priority,0)) DESC, p.id ASC LIMIT ?",
+                        ") q"
+                        " ORDER BY pow("
+                        " ((random() & 9223372036854775807) / 9223372036854775807.0),"
+                        " 1.0 / (1.0 + max(0, q.source_priority) + max(0, q.rating + 10))"
+                        " ) DESC LIMIT ?",
                         &err) != 0) {
         result.error = err;
         return result;

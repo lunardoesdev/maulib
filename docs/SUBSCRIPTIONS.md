@@ -184,16 +184,21 @@ test_events(
 
 ## Выбор кандидата
 
-```sql
-ORDER BY g.priority DESC,
-         MAX(COALESCE(s.priority, 0)) DESC,
-         p.rating DESC,
-         COALESCE(p.last_tested_at, 0) ASC,
-         p.id ASC
+Кандидаты выбираются **случайно, с весами** по приоритету группы, приоритету
+подписки-источника и рейтингу прокси:
+
+```text
+weight = 1 + max(0, group_priority)
+           + max(0, source_priority)
+           + max(0, rating + 10)
+
+key = random_uniform ^ (1 / weight)
+ORDER BY key DESC
 ```
 
-Сначала подписки с максимальным `priority`, затем лучший рейтинг, затем
-давно не тестировавшиеся.
+То есть высокоприоритетные и высокорейтинговые прокси выпадают чаще, но
+порядок не фиксированный: одинаковые по весу конфиги перемешиваются.
+Это используется и в batch-discovery, и в обычном `mewnet_subs_test_next`.
 
 ## Rate limit
 
