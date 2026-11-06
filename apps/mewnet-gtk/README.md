@@ -55,7 +55,7 @@ Full specification and failure matrix:
 --proxy-port N         local mixed proxy port (0 = free port)
 --batch N              fast discovery batch size (default 70)
 --concurrency N        concurrent checks (default 70)
---timeout MS           per-proxy timeout (default 4000)
+--timeout MS           per-proxy timeout (default 6000)
 --fetch-interval S     subscription refresh interval (default 3600)
 --slow-interval S      delay between checks when a proxy works (default 24)
 --pool-target N        verified proxies to keep ready (default 12)

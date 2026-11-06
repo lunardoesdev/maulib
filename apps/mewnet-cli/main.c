@@ -129,7 +129,7 @@ static void options_default(Options* options) {
     options->db_path = strdup("data/mewnet-cli.db");
     options->batch = 70;
     options->concurrency = 70;
-    options->timeout_ms = 4000;
+    options->timeout_ms = 6000;
     options->fetch_interval_sec = 3600;
     options->slow_interval_sec = 24;
     options->pool_target = 12;

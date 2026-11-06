@@ -858,7 +858,7 @@ static void options_init(Options* options) {
     options->db_path = g_strdup("data/mewnet-gtk.db");
     options->batch = 70;
     options->concurrency = 70;
-    options->timeout_ms = 4000;
+    options->timeout_ms = 6000;
     options->fetch_interval_sec = 3600;
     options->slow_interval_sec = 24;
     options->pool_target = 12;
@@ -949,7 +949,7 @@ static bool parse_options(int argc, char** argv, Options* options, GError** erro
     }
     if (options->batch == 0) options->batch = 70;
     if (options->concurrency == 0) options->concurrency = 70;
-    if (options->timeout_ms <= 0) options->timeout_ms = 4000;
+    if (options->timeout_ms <= 0) options->timeout_ms = 6000;
     if (options->fetch_interval_sec <= 0) options->fetch_interval_sec = 3600;
     if (options->slow_interval_sec <= 0) options->slow_interval_sec = 24;
     if (options->pool_target <= 0) options->pool_target = 12;
