@@ -61,8 +61,8 @@ Full specification and failure matrix:
 --pool-target N        verified proxies to keep ready (default 4)
 --health-interval S    active proxy health check period (default 6)
 --health-timeout MS    active proxy health check timeout (default 2500)
---health-url URL       health check URL (default gstatic 204)
---health-expected CODE expected health status (default 204)
+--health-url URL       health check URL (default https://lua.org)
+--health-expected CODE expected health status (default 200)
 --test-url URL         discovery test URL
 --test-expected CODE   discovery expected status (default 204)
 --screenshot PATH      render the window to PNG and exit (UI smoke test)

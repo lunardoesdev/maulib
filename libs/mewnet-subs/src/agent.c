@@ -70,8 +70,8 @@ mewnet_agent_config mewnet_agent_config_default(void) {
     config.pool_target = 4;
     config.health_interval_sec = 6;
     config.health_timeout_ms = 2500;
-    config.health_url = "https://www.gstatic.com/generate_204";
-    config.health_expected = "204";
+    config.health_url = "https://lua.org";
+    config.health_expected = "200";
     return config;
 }
 
@@ -721,7 +721,7 @@ mewnet_agent* mewnet_agent_start(const mewnet_agent_config* config,
                                        ? config->slow_interval_sec : 24;
     snprintf(agent->health_url, sizeof(agent->health_url), "%s",
              config->health_url != NULL ? config->health_url
-                                        : "https://www.gstatic.com/generate_204");
+                                        : "https://lua.org");
     snprintf(agent->health_expected, sizeof(agent->health_expected), "%s",
              config->health_expected != NULL ? config->health_expected : "204");
     agent->callbacks = callbacks;

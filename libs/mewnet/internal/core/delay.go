@@ -166,7 +166,24 @@ func safeURLTest(ctx context.Context, proxy C.Proxy, url string, expected utils.
 		}
 	}()
 
-	delay, err = proxy.URLTest(ctx, url, expected)
+	type outcome struct {
+		delay uint16
+		err   error
+	}
+	// Some adapters do not honor cancellation while dialing. Run the test in a
+	// goroutine so the caller (discovery/health) always gets its timeout back.
+	result := make(chan outcome, 1)
+	go func() {
+		delay, err := proxy.URLTest(ctx, url, expected)
+		result <- outcome{delay: delay, err: err}
+	}()
+
+	select {
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	case value := <-result:
+		delay, err = value.delay, value.err
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			return 0, err
