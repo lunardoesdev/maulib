@@ -208,6 +208,17 @@ MEWNET_SUBS_API mewnet_error mewnet_subs_first_alive(mewnet_subs* db, int64_t gr
 MEWNET_SUBS_API mewnet_error mewnet_subs_next_alive(mewnet_subs* db, int64_t group_id,
                                                     int64_t exclude_id,
                                                     mewnet_subs_proxy* out);
+/*
+ * Pick a random proxy among the best alive candidates (highest rating, then
+ * lowest delay). `exclude_id` and `avoid_id` are not returned; pass 0 to
+ * disable an exclusion. `candidates` is the size of the best-candidate window.
+ */
+MEWNET_SUBS_API mewnet_error mewnet_subs_random_best_alive(mewnet_subs* db,
+                                                           int64_t group_id,
+                                                           int64_t exclude_id,
+                                                           int64_t avoid_id,
+                                                           size_t candidates,
+                                                           mewnet_subs_proxy* out);
 
 /* Testing and rating. */
 typedef struct mewnet_subs_test_result {

@@ -84,6 +84,7 @@ struct App {
     bool switch_requested;    /* guarded */
 
     int64_t current_id; /* guarded */
+    int64_t last_switch_id;
     char current_name[MEWNET_NAME_MAX];
     char current_protocol[MEWNET_TYPE_MAX];
     char current_server[MEWNET_HOST_MAX];
@@ -477,6 +478,62 @@ static bool switch_next_alive(App* app, bool verify) {
     return false;
 }
 
+/* Manual switch: choose randomly among the best alive candidates, excluding
+ * the current node and the node used by the previous manual switch. */
+static bool switch_random_best(App* app) {
+    int64_t current_id;
+    g_mutex_lock(&app->lock);
+    current_id = app->current_id;
+    g_mutex_unlock(&app->lock);
+
+    int64_t alive = 0;
+    mewnet_subs_count_alive(app->db, app->group_id, &alive);
+    if (alive <= 1) {
+        return false;
+    }
+
+    int64_t exclude = current_id;
+    int64_t avoid = app->last_switch_id;
+    for (int64_t attempt = 0; attempt < alive; attempt++) {
+        mewnet_subs_proxy proxy;
+        mewnet_error err = mewnet_subs_random_best_alive(
+            app->db, app->group_id, exclude, avoid, 5, &proxy);
+        if (err.code == MEWNET_ERROR_NOT_FOUND && avoid != 0) {
+            avoid = 0;
+            err = mewnet_subs_random_best_alive(
+                app->db, app->group_id, exclude, avoid, 5, &proxy);
+        }
+        if (err.code == MEWNET_ERROR_NOT_FOUND) {
+            break;
+        }
+        if (err.code != MEWNET_ERROR_NONE) {
+            log_line(app, "SWITCH FAILED: %s", err.message);
+            break;
+        }
+
+        if (!route_proxy(app, &proxy, !app->announced_ready)) {
+            mewnet_subs_record_test(app->db, proxy.id, false, 0, "route failed");
+            exclude = proxy.id;
+            continue;
+        }
+        app->announced_ready = true;
+        if (health_check_active(app)) {
+            int64_t previous = current_id;
+            app->last_switch_id = previous;
+            log_line(app, "SWITCH random id=%lld name=%s", (long long)proxy.id,
+                     proxy.name[0] != '\0' ? proxy.name : "(manual)");
+            return true;
+        }
+        log_line(app, "SWITCH candidate id=%lld failed verification", (long long)proxy.id);
+        fail_current(app, "switch verification failed");
+        exclude = 0;
+        avoid = 0;
+    }
+
+    log_line(app, "SWITCH failed: no verified working proxy");
+    return false;
+}
+
 static int64_t count_subscriptions_worker(App* app) {
     mewnet_subscription_list list;
     size_t count = load_subscriptions(app, app->db, &list);
@@ -690,7 +747,7 @@ static gpointer worker_main(gpointer data) {
         /* User asked for another proxy. */
         if (take_switch_request(app)) {
             log_line(app, "SWITCH requested");
-            if (!switch_next_alive(app, true)) {
+            if (!switch_random_best(app)) {
                 log_line(app, "SWITCH no other working proxy; looking for candidates");
                 if (run_batch(app, "switch", true)) {
                     app->announced_ready = true;

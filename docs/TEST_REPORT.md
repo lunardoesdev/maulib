@@ -408,8 +408,9 @@ make test-gtk-agent
 PASS  bootstrap: READY
 PASS  bootstrap: local proxy port
 PASS  bootstrap: traffic through proxy
-PASS  pool: grew to two working proxies
+PASS  pool: grew to three working proxies
 PASS  switch: moved to another proxy
+PASS  switch: random among best, not just two
 PASS  switch: traffic still works
 PASS  failover: active proxy identified
 PASS  failover: health check detected dead proxy
@@ -424,10 +425,10 @@ PASS  wait: subscription inserted
 PASS  wait: fetched and activated
 PASS  wait: traffic works
 
-18 passed, 0 failed
+19 passed, 0 failed
 ```
 
-Проверены: bootstrap, рост пула, ручное переключение, health-check и
+Проверены: bootstrap, рост пула, случайное переключение среди лучших, health-check и
 автоматический failover, полный отказ всех прокси, возврат нового узла,
 а также сценарий «пустая база → подписка появилась → автоматический запуск».
 Спецификация и матрица отказов — в

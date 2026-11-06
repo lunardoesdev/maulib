@@ -87,6 +87,15 @@ int main(void) {
           next.id == temp_id, "next alive after current");
     check(mewnet_subs_next_alive(db, group_id, temp_id, &next).code == MEWNET_ERROR_NONE &&
           next.id == proxy_id, "next alive wraps");
+    mewnet_subs_proxy picked;
+    check(mewnet_subs_random_best_alive(db, group_id, 0, 0, 5, &picked).code == MEWNET_ERROR_NONE &&
+          (picked.id == proxy_id || picked.id == temp_id), "random best any");
+    check(mewnet_subs_random_best_alive(db, group_id, proxy_id, 0, 5, &picked).code == MEWNET_ERROR_NONE &&
+          picked.id == temp_id, "random best excludes current");
+    check(mewnet_subs_random_best_alive(db, group_id, temp_id, 0, 5, &picked).code == MEWNET_ERROR_NONE &&
+          picked.id == proxy_id, "random best excludes other");
+    check(mewnet_subs_random_best_alive(db, group_id, proxy_id, temp_id, 5, &picked).code == MEWNET_ERROR_NOT_FOUND,
+          "random best excludes both");
     check(mewnet_subs_remove_proxy(db, temp_id).code == MEWNET_ERROR_NONE, "remove temp");
     r = mewnet_subs_record_test(db, proxy_id, true, 43, "");
     check(r.error.code == MEWNET_ERROR_NONE && r.rating_delta == 0 && r.rating_after == 1, "rating +1 daily cap");

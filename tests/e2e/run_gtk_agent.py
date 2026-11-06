@@ -366,7 +366,7 @@ def main():
                 "--timeout", "1000",
                 "--slow-interval", "1",
                 "--fetch-interval", "3600",
-                "--pool-target", "2",
+                "--pool-target", "3",
                 "--health-interval", "1",
                 "--health-timeout", "700",
                 "--health-url", origin.url(),
@@ -385,24 +385,36 @@ def main():
         ok, detail = wait_curl_ok(port, origin.url())
         check("bootstrap: traffic through proxy", ok, str(detail))
 
-        deadline = time.time() + 25
-        while time.time() < deadline and alive_count(db_path) < 2:
+        deadline = time.time() + 30
+        while time.time() < deadline and alive_count(db_path) < 3:
             time.sleep(0.3)
-        check("pool: grew to two working proxies", alive_count(db_path) >= 2,
+        check("pool: grew to three working proxies", alive_count(db_path) >= 3,
               f"alive={alive_count(db_path)}")
 
-        before = app.active_names()[-1] if app.active_names() else ""
-        app.send(signal.SIGUSR1)
-        switched = -1
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            names = app.active_names()
-            if names and names[-1] != before:
-                switched = 1
+        switched_names = set()
+        switched = 0
+        for _ in range(3):
+            before = app.active_names()[-1] if app.active_names() else ""
+            app.send(signal.SIGUSR1)
+            deadline = time.time() + 15
+            changed = False
+            while time.time() < deadline:
+                names = app.active_names()
+                if names and names[-1] != before:
+                    switched_names.add(proxy_index(names[-1]))
+                    changed = True
+                    break
+                time.sleep(0.2)
+            if not changed:
                 break
-            time.sleep(0.2)
-        check("switch: moved to another proxy", switched > 0,
-              f"before={before} after={app.active_names()[-1:]}")
+            switched += 1
+            ok, detail = wait_curl_ok(port, origin.url())
+            if not ok:
+                break
+        check("switch: moved to another proxy", switched >= 1,
+              f"switched={switched}")
+        check("switch: random among best, not just two", len(switched_names) >= 3,
+              f"targets={sorted(switched_names)}")
         ok, detail = wait_curl_ok(port, origin.url())
         check("switch: traffic still works", ok, str(detail))
 
@@ -462,7 +474,7 @@ def main():
                 "--concurrency", "10",
                 "--timeout", "1000",
                 "--slow-interval", "1",
-                "--pool-target", "2",
+                "--pool-target", "3",
                 "--health-interval", "1",
                 "--health-timeout", "700",
                 "--health-url", origin.url(),

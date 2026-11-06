@@ -20,7 +20,8 @@ GTK4 development files are required (`gtk4.pc`). If GTK4 is not installed,
 - add/remove subscriptions (URL + priority);
 - fetch a new subscription immediately after it is added;
 - show the active proxy: name, protocol, address, delay;
-- **Change proxy** switches to the next verified node;
+- **Change proxy** picks a random node among the best verified proxies
+  (highest rating, then lowest delay), excluding the current and previous one;
 - show the local mixed proxy, for example `http://127.0.0.1:18085`;
 - log discovery events: `FETCH`, `BATCH`, `ACTIVE`, `TEST`, `HEALTH FAIL`,
   `SWITCH`, `DISCOVERED`;
@@ -82,5 +83,5 @@ make test-gtk-agent
 ```
 
 It starts local HTTP proxies and a local `204` origin, then verifies bootstrap,
-pool growth, manual switching, health failover, total outage, recovery, and the
-"wait for a subscription" path. See `tests/e2e/run_gtk_agent.py`.
+pool growth, random switching across at least three best nodes, health
+failover, total outage, recovery, and the "wait for a subscription" path. See `tests/e2e/run_gtk_agent.py`.

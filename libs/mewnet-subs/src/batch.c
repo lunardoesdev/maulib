@@ -247,6 +247,54 @@ mewnet_error mewnet_subs_first_alive(mewnet_subs* db, int64_t group_id,
     return mewnet_subs_get_proxy(db, id, out);
 }
 
+mewnet_error mewnet_subs_random_best_alive(mewnet_subs* db, int64_t group_id,
+                                           int64_t exclude_id, int64_t avoid_id,
+                                           size_t candidates, mewnet_subs_proxy* out) {
+    if (db == NULL || out == NULL) {
+        return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db and out are required");
+    }
+    memset(out, 0, sizeof(*out));
+    if (candidates == 0) {
+        candidates = 5;
+    }
+    if (candidates > 50) {
+        candidates = 50;
+    }
+
+    sqlite3_stmt* stmt = NULL;
+    mewnet_error err;
+    subs_clear_error(&err);
+    const char* sql =
+        "SELECT id FROM ("
+        " SELECT id FROM proxies"
+        " WHERE alive=1 AND (?=0 OR group_id=?) AND id<>? AND id<>?"
+        " ORDER BY rating DESC,"
+        " CASE WHEN last_delay_ms IS NULL OR last_delay_ms<=0"
+        "      THEN 2147483647 ELSE last_delay_ms END ASC,"
+        " id ASC"
+        " LIMIT ?"
+        ") ORDER BY random() LIMIT 1";
+    if (subs_db_prepare(db->db, &stmt, sql, &err) != 0) {
+        return err;
+    }
+    sqlite3_bind_int64(stmt, 1, group_id);
+    sqlite3_bind_int64(stmt, 2, group_id);
+    sqlite3_bind_int64(stmt, 3, exclude_id);
+    sqlite3_bind_int64(stmt, 4, avoid_id);
+    sqlite3_bind_int64(stmt, 5, (int64_t)candidates);
+    int rc = sqlite3_step(stmt);
+    if (rc != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        if (rc == SQLITE_DONE) {
+            return subs_make_error(MEWNET_ERROR_NOT_FOUND, "no alive candidates found");
+        }
+        return subs_db_error(db->db, "select random best alive proxy");
+    }
+    int64_t id = sqlite3_column_int64(stmt, 0);
+    sqlite3_finalize(stmt);
+    return mewnet_subs_get_proxy(db, id, out);
+}
+
 mewnet_error mewnet_subs_next_alive(mewnet_subs* db, int64_t group_id,
                                     int64_t exclude_id, mewnet_subs_proxy* out) {
     if (db == NULL || out == NULL) {
