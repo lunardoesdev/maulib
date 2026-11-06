@@ -108,6 +108,7 @@ struct App {
     int64_t next_discover_ms;
     int64_t last_pool_batch_ms;
     int64_t last_emergency_fetch_ms;
+    int64_t last_new_fetch_ms;
 };
 
 /* ------------------------------------------------------------------ */
@@ -648,6 +649,36 @@ static bool run_batch(App* app, const char* reason, bool route_found) {
     return false;
 }
 
+/* First fetch for a subscription that has never been downloaded. Unlike the
+ * hourly refresh this is not an update, so several new sources can be pulled
+ * back-to-back (one per loop, with a small cooldown). */
+static int64_t next_unfetched_subscription(App* app) {
+    mewnet_subscription_list list;
+    if (load_subscriptions(app, app->db, &list) == 0) {
+        mewnet_subs_unload_subscriptions(list);
+        return 0;
+    }
+    int64_t best_id = 0;
+    int best_failures = 0;
+    int best_priority = 0;
+    for (size_t i = 0; i < list.count; i++) {
+        mewnet_subscription* sub = &list.items[i];
+        if (!sub->enabled || sub->last_fetch_at != 0) {
+            continue;
+        }
+        bool better = best_id == 0 ||
+                      sub->failure_count < best_failures ||
+                      (sub->failure_count == best_failures && sub->priority > best_priority);
+        if (better) {
+            best_id = sub->id;
+            best_failures = sub->failure_count;
+            best_priority = sub->priority;
+        }
+    }
+    mewnet_subs_unload_subscriptions(list);
+    return best_id;
+}
+
 static gpointer worker_main(gpointer data) {
     App* app = (App*)data;
     int64_t last_fetch_ms = max_last_fetch(app);
@@ -816,6 +847,18 @@ static gpointer worker_main(gpointer data) {
                 }
             }
             continue;
+        }
+
+        /* Bootstrap never-fetched sources before the hourly refresh clock. */
+        if (now_ms() - app->last_new_fetch_ms >= 5000) {
+            int64_t new_id = next_unfetched_subscription(app);
+            if (new_id != 0) {
+                app->last_new_fetch_ms = now_ms();
+                if (fetch_subscription(app, new_id)) {
+                    last_fetch_ms = now_ms();
+                }
+                continue;
+            }
         }
 
         /* Refresh one source per fetch interval. */
