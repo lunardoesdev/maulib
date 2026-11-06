@@ -43,7 +43,7 @@ GTK4 development files are required (`gtk4.pc`). If GTK4 is not installed,
 - Subscriptions are refreshed at most once per hour, except for newly added
   subscriptions and emergencies when no working node exists.
 
-The reliability engine lives in `libmewnet_subs` and is shared with the CLI/TUI
+The reliability engine lives in `libmewnet` and is shared with the CLI/TUI
 front-end. Subscription rows are loaded one page at a time (50 by default).
 Full specification and failure matrix:
 [`docs/GTK_RELIABILITY.md`](../../docs/GTK_RELIABILITY.md).

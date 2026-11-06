@@ -2,7 +2,7 @@
  * mewnet-gtk - GTK4 front-end for the mewnet discovery agent.
  *
  * All reliability logic (health checks, failover, pool growth, subscription
- * scheduling) lives in libmewnet_subs. This file only renders state and sends
+ * scheduling) lives in libmewnet. This file only renders state and sends
  * user actions to the agent.
  */
 

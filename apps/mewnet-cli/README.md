@@ -1,6 +1,6 @@
 # mewnet-cli
 
-CLI/TUI front-end for the shared `libmewnet_subs` discovery agent. No extra
+CLI/TUI front-end for the shared `libmewnet` discovery agent. No extra
 dependencies: POSIX terminal + ANSI, the same engine as the GTK4 app.
 
 ```bash

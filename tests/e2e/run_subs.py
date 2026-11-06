@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end test for libmewnet_subs + mewnet-subs CLI.
+"""End-to-end test for libmewnet + mewnet-subs CLI.
 
 Starts a local Xray VLESS server and a local HTTP subscription server, then
 exercises streaming fetch, base64/plain parsing, testing, rating and SQLite.
@@ -17,7 +17,7 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-BIN = os.path.join(ROOT, "build", "libs", "mewnet-subs", "mewnet-subs")
+BIN = os.path.join(ROOT, "build", "apps", "mewnet-subs", "mewnet-subs")
 XRAY_BIN = os.environ.get("XRAY_BIN", "/tmp/opencode/xray/xray")
 
 sys.path.insert(0, HERE)
@@ -40,8 +40,7 @@ def check(name, condition, detail=""):
 def run(db, *args):
     env = os.environ.copy()
     env["LD_LIBRARY_PATH"] = os.pathsep.join(
-        [os.path.join(ROOT, "build", "libs", "mewnet-subs"), os.path.join(ROOT, "dist"),
-         env.get("LD_LIBRARY_PATH", "")]
+        [os.path.join(ROOT, "dist"), env.get("LD_LIBRARY_PATH", "")]
     )
     proc = subprocess.run(
         [BIN, "--db", db, "--limit", "0", "--timeout", "5000", *args],

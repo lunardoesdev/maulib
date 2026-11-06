@@ -9,7 +9,7 @@ typedef CRITICAL_SECTION mewnet_mutex;
 typedef pthread_mutex_t mewnet_mutex;
 #endif
 
-#include <sqlite3.h>
+#include "sqlite3.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

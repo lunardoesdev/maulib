@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#include "../../include/mewnet_types.h"
+#include "mewnet_types.h"
 
 /*
  * Callback trampolines. Go code must not call a C function pointer directly,

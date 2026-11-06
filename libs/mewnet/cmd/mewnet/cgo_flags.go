@@ -1,0 +1,9 @@
+package main
+
+/*
+#cgo CFLAGS: -I${SRCDIR} -DSQLITE_THREADSAFE=1 -DSQLITE_OMIT_LOAD_EXTENSION=1
+#cgo CFLAGS: -DSQLITE_DQS=0 -DSQLITE_DEFAULT_FOREIGN_KEYS=1 -DSQLITE_ENABLE_MATH_FUNCTIONS=1
+#cgo linux LDFLAGS: -lpthread -ldl -lm
+#cgo windows LDFLAGS: -lws2_32
+*/
+import "C"

@@ -61,13 +61,13 @@ mewnet/
 │   └── include/
 │       ├── mewnet.h           публичные функции
 │       └── mewnet_types.h     общие структуры ABI
-├── libs/mewnet-subs/          C/CMake библиотека подписок
-│   ├── include/mewnet_subs.h
+├── libs/mewnet/cmd/mewnet/    единый Go-пакет: Go + C подписок + SQLite
+│   ├── mewnet_subs.h
 │   ├── src/                   SQLite, streaming ingest, rating, rate limit
 │   ├── tools/mewnet-subs.c    CLI
 │   └── tests/
 ├── apps/gui/                  Odin + raylib GUI
-├── third_party/sqlite3/       amalgamation
+├── libs/mewnet/cmd/mewnet/sqlite3.c  amalgamation
 ├── tests/                     C, Python, e2e
 ├── cmake/toolchains/          mingw toolchain
 ├── Makefile
@@ -261,7 +261,7 @@ CGO_ENABLED=1 go build \
 - памяти мало (~1.2 ГБ свободно), собирать с `-p=2`;
 - glibc с Fedora 45 может не подойти для старых дистрибутивов; для поставки
   собирать в более старом base-образе;
-- артефакты: `.so`, `libs/mewnet/include/mewnet.h`, sha256, `mewnet.pc`,
+- артефакты: `.so`, `libs/mewnet/cmd/mewnet/mewnet.h`, sha256, `mewnet.pc`,
   примеры C/Python; mingw-сборка — `dist/windows/mewnet.dll`.
 
 ## 6. Тестирование
@@ -326,7 +326,7 @@ CGO_ENABLED=1 go build \
 - [x] **7. Документация** — Makefile, README, `TEST_REPORT.md`, LICENSE.
 - [x] **8. SharedVPNLink** — объект-ссылка, per-link SOCKS5 с авторизацией,
   ping/speed/exit_ip, конкурентные задачи, hot-swap; e2e на 4 прокси.
-- [x] **9. Подписки** — CMake/C-библиотека `libmewnet_subs`: потоковый
+- [x] **9. Подписки** — C-часть внутри единой `libmewnet`: потоковый
   plain/base64 ingest, SQLite, priority, рейтинг +1/-1 с суточными лимитами,
   общий rate limit, CLI `mewnet-subs`.
 

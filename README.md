@@ -20,14 +20,14 @@ C-ABI (`c-shared`) обёртка над ядром [mihomo](https://github.com/
 
 Публичный ABI — **v2**, raylib-style: простые функции, value-структуры,
 `load/unload` для списков, opaque handles и никаких JSON-строк.
-Заголовки: [`libs/mewnet/include/mewnet.h`](libs/mewnet/include/mewnet.h) и
-[`libs/mewnet/include/mewnet_types.h`](libs/mewnet/include/mewnet_types.h).
+Заголовки: [`libs/mewnet/cmd/mewnet/mewnet.h`](libs/mewnet/cmd/mewnet/mewnet.h) и
+[`libs/mewnet/cmd/mewnet/mewnet_types.h`](libs/mewnet/cmd/mewnet/mewnet_types.h).
 
 ## Структура
 
 ```text
 libs/mewnet/       Go-ядро, c-shared libmewnet
-libs/mewnet-subs/  C/CMake библиотека libmewnet_subs + CLI
+libs/mewnet/cmd/mewnet/  один Go-пакет: Go-ядро + весь C-код подписок + SQLite
 apps/gui/          Odin + raylib GUI
 apps/mewnet-gtk/   C + GTK4 control panel
 apps/mewnet-cli/   C CLI/TUI agent
@@ -46,7 +46,7 @@ Toolchain ставится через mise:
 ```bash
 make deps           # go, odin, android-sdk, clang, cmake
 make build          # dist/libmewnet.so
-make subs           # build/libs/mewnet-subs/libmewnet_subs.so + mewnet-subs
+make subs           # одна dist/libmewnet.so + CLI/GUI/тесты
 make gui            # build/mewnet-gui
 ```
 
@@ -54,7 +54,7 @@ make gui            # build/mewnet-gui
 
 ```bash
 make build-mingw-core   # dist/windows/mewnet.dll + import lib
-make subs-mingw         # build-mingw/libs/mewnet-subs/libmewnet_subs.dll
+make subs-mingw         # одна dist/windows/mewnet.dll
 ```
 
 ## Быстрый старт (C)
@@ -215,7 +215,8 @@ mewnet_task_destroy(task);
 
 ## Подписки
 
-Рядом с `mewnet` есть CMake-библиотека `libmewnet_subs` и CLI `mewnet-subs`:
+Подписки, SQLite и discovery-agent входят в ту же `libmewnet` — отдельной
+`libmewnet_subs` больше нет. CLI `mewnet-subs`:
 
 - потоково качает plain/base64 подписки;
 - пишет конфиги в SQLite;
@@ -228,8 +229,8 @@ mewnet_task_destroy(task);
 
 ```bash
 make subs
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub add URL 100 name
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db run --limit 10 --window 240
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db sub add URL 0 name
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db run --limit 10 --window 240
 ```
 
 Подробности — в [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
@@ -306,7 +307,7 @@ make gui
 
 ## API
 
-Полное описание — в [`libs/mewnet/include/mewnet.h`](libs/mewnet/include/mewnet.h).
+Полное описание — в [`libs/mewnet/cmd/mewnet/mewnet.h`](libs/mewnet/cmd/mewnet/mewnet.h).
 
 Основные группы:
 

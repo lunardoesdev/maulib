@@ -17,7 +17,7 @@ make gui
 
 GUI использует:
 
-- `libmewnet_subs` для всех операций с SQLite;
+- `libmewnet` для всех операций с SQLite;
 - `vendor:raylib` из Odin;
 - только страницы прокси, а не всю подписку;
 - DejaVu Sans + Symbola fallback для Unicode/эмодзи.
@@ -53,7 +53,7 @@ GUI **не загружает**:
 
 ## Библиотечные API для GUI
 
-Добавлены в `libmewnet_subs`:
+Добавлены в `libmewnet`:
 
 - `mewnet_subs_load_groups` / `mewnet_subs_add_subscription_in_group`;
 - `mewnet_subs_load_proxy_summaries` / `mewnet_subs_unload_proxy_summaries`

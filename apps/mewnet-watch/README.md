@@ -37,4 +37,4 @@
 curl -x http://127.0.0.1:18085 https://lua.org
 ```
 
-`mewnet-watch` использует только публичное API `libmewnet_subs` и `libmewnet`.
+`mewnet-watch` использует только публичное API `libmewnet` и `libmewnet`.

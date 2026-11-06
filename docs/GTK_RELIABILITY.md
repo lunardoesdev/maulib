@@ -7,7 +7,7 @@
 
 ## Архитектура
 
-Надёжность вынесена в библиотеку `libmewnet_subs` (`src/agent.c`). GTK4 и
+Надёжность вынесена в библиотеку `libmewnet` (`src/agent.c`). GTK4 и
 CLI/TUI — тонкие клиенты: они открывают базу и Mihomo, запускают agent,
 рисуют события и отправляют команды `switch` / `fetch subscription`.
 

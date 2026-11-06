@@ -8,7 +8,7 @@
    авторизацией;
 3. методы `ping`, `speed`, `exit_ip` и их async-варианты.
 
-Заголовки: `libs/mewnet/include/mewnet.h`, `libs/mewnet/include/mewnet_types.h`.
+Заголовки: `libs/mewnet/cmd/mewnet/mewnet.h`, `libs/mewnet/cmd/mewnet/mewnet_types.h`.
 ABI v2 — структуры C, никаких JSON-строк. Ошибки возвращаются в результате,
 для простых операций — кодом `mewnet_error_code`.
 

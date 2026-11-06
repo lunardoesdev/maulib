@@ -41,7 +41,7 @@ subs-mingw: build-mingw-core
 	$(MISE) exec -- cmake -S . -B build-mingw \
 		-DCMAKE_TOOLCHAIN_FILE=$(CURDIR)/cmake/toolchains/mingw-x86_64.cmake \
 		-DCMAKE_BUILD_TYPE=Release \
-		-DMEWNET_SUBS_BUILD_TESTS=OFF \
+		-DMEWNET_BUILD_TESTS=OFF \
 		-DMEWNET_BUILD_GTK=OFF \
 		-DMEWNET_LIBRARY=$(CURDIR)/dist/windows/libmewnet.dll.a
 	$(MISE) exec -- cmake --build build-mingw -j$(shell nproc)
@@ -99,19 +99,19 @@ gui: subs
 	ln -sf "$(XAU_LIB)" build/gui/syslib/libXau.so.6
 	LIBRARY_PATH="$(CURDIR)/build/gui/syslib" $(MISE) exec -- odin build apps/gui \
 		-out:build/mewnet-gui \
-		-extra-linker-flags:"-L$(CURDIR)/build/libs/mewnet-subs -L$(CURDIR)/dist -lmewnet_subs -lmewnet -Wl,-rpath,$(CURDIR)/build/libs/mewnet-subs:$(CURDIR)/dist"
+		-extra-linker-flags:"-L$(CURDIR)/dist -lmewnet -Wl,-rpath,$(CURDIR)/dist"
 
 test-stress: build
 	$(PYTHON) tests/python/test_stress.py
 
 test-c: build
-	$(CC) tests/c/test_api.c -Ilibs/mewnet/include -Ldist -lmewnet -Wl,-rpath,'$$ORIGIN' -o dist/test_api
+	$(CC) tests/c/test_api.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet -Wl,--allow-shlib-undefined -Wl,-rpath,'$$ORIGIN' -o dist/test_api
 	./dist/test_api
 
 # Ping through the C ABI using a real link:
 #   make test-c-ping MEWNET_TEST_VLESS='vless://...' [MEWNET_PING_URL='http://.../204']
 test-c-ping: build
-	$(CC) tests/c/test_ping.c -Ilibs/mewnet/include -Ldist -lmewnet -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
+	$(CC) tests/c/test_ping.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet -Wl,--allow-shlib-undefined -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
 	@if [ -z "$(MEWNET_TEST_VLESS)" ]; then \
 		echo "set MEWNET_TEST_VLESS='vless://...'"; exit 2; \
 	fi
@@ -119,7 +119,7 @@ test-c-ping: build
 
 # Same, but against a local Xray VLESS server (no real link needed).
 test-c-ping-local: build
-	$(CC) tests/c/test_ping.c -Ilibs/mewnet/include -Ldist -lmewnet -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
+	$(CC) tests/c/test_ping.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet -Wl,--allow-shlib-undefined -Wl,-rpath,'$$ORIGIN' -o dist/test_ping
 	$(PYTHON) tests/e2e/c_ping_demo.py
 
 test-e2e: build

@@ -1,0 +1,5 @@
+add_executable(mewnet-subs main.c)
+target_include_directories(mewnet-subs PRIVATE "${MEWNET_PACKAGE_DIR}")
+target_link_libraries(mewnet-subs PRIVATE "${MEWNET_LIBRARY}")
+target_compile_options(mewnet-subs PRIVATE -Wall -Wextra)
+set_target_properties(mewnet-subs PROPERTIES BUILD_RPATH "${MEWNET_ROOT}/dist")

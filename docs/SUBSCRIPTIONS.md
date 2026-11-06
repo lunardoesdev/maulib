@@ -1,6 +1,6 @@
-# Подписки: `libmewnet_subs`
+# Подписки в `libmewnet`
 
-`libmewnet_subs` — C-библиотека для работы с подписками:
+C-часть подписок, SQLite и discovery-agent входят в единую `libmewnet`:
 
 - качает подписку потоково, не загружая тело целиком в память;
 - поддерживает plain text и base64 (стандартный и URL-safe);
@@ -15,34 +15,34 @@
 ```bash
 make deps          # mise install: go, odin, android-sdk, clang, cmake
 make build         # dist/libmewnet.so
-make subs          # build/libs/mewnet-subs/libmewnet_subs.so + mewnet-subs
+make subs          # dist/libmewnet.so + build/apps/mewnet-subs/mewnet-subs
 make test-subs     # ctest
 ```
 
 CMake использует:
 
 - `mewnet` из `dist/libmewnet.so`;
-- `third_party/sqlite3` (amalgamation, public domain);
+- SQLite amalgamation внутри `libs/mewnet/cmd/mewnet` (public domain);
 - clang из mise.
 
 ## CLI
 
 ```bash
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub add URL 100 name
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub ls
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub rm 1
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db sub priority 1 200
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db sub add URL 100 name
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db sub ls
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db sub rm 1
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db sub priority 1 200
 
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db --limit 0 fetch 1
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db --limit 0 fetch --due
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db --limit 0 test
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db --limit 10 --window 240 run
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db --limit 0 fetch 1
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db --limit 0 fetch --due
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db --limit 0 test
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db --limit 10 --window 240 run
 
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db proxies --limit 20
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db proxy add 1 'vless://...'
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db proxy rm 42
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db proxy show 42
-./build/libs/mewnet-subs/mewnet-subs --db data/subs.db stats
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db proxies --limit 20
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db proxy add 1 'vless://...'
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db proxy rm 42
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db proxy show 42
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db stats
 ```
 
 `run` — основной цикл:
@@ -322,7 +322,7 @@ mewnet_subs_config cfg = mewnet_subs_config_default();
 cfg.db_path = "data/subs.db";
 mewnet_subs_open_result opened = mewnet_subs_open(&cfg);
 
-mewnet_error err = mewnet_subs_add_subscription(opened.db, url, 100, "name");
+mewnet_error err = mewnet_subs_add_subscription(opened.db, url, 0, "name");
 mewnet_subs_fetch_result fetched = mewnet_subs_fetch_due(opened.db);
 
 mewnet_instance* m = ...; /* mewnet_init с mixed_port = -1 */

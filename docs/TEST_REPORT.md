@@ -188,7 +188,7 @@ PASS  surviving links still work
 - Xray 26.x блокирует loopback/private цели из VLESS-inbound по умолчанию;
   в тестовом конфиге добавлено `finalRules: allow 127.0.0.0/8`.
 
-## 8. Подписки (`libmewnet_subs`)
+## 8. Подписки (`libmewnet`)
 
 Сборка:
 
@@ -223,7 +223,7 @@ CTest:
   метаданные имя/сервер/порт обновились;
 - тест мёртвого прокси: `rating 0->-1`, повторный тест в тот же день `+0`;
 - в `test_events` пишутся все результаты;
-- `libmewnet_subs` экспортирует только `mewnet_subs_*` символы.
+- `libmewnet` экспортирует только `mewnet_subs_*` символы.
 
 E2E:
 
@@ -253,12 +253,12 @@ make gui
 
 Проверено:
 
-- `odin build` с `vendor:raylib` и `libmewnet_subs`;
+- `odin build` с `vendor:raylib` и `libmewnet`;
 - запуск окна 1200x760 на текущем DISPLAY;
 - GUI использует `mewnet_subs_load_proxy_summaries` (страница без `link`) и
   `mewnet_subs_get_proxy` только для выбранной записи;
 - добавление/удаление подписок и ручных прокси идёт через публичное API
-  `libmewnet_subs`, без прямых SQL-запросов из GUI;
+  `libmewnet`, без прямых SQL-запросов из GUI;
 - ручные прокси (`manual=1`) не удаляются generation-cleanup при fetch.
 
 ## 10. Кросс-компиляция mingw
@@ -272,8 +272,8 @@ make subs-mingw
 
 - `dist/windows/mewnet.dll` — PE32+ x86-64;
 - `dist/windows/libmewnet.dll.a` — import library;
-- `build-mingw/libs/mewnet-subs/libmewnet_subs.dll` — PE32+ x86-64;
-- `build-mingw/libs/mewnet-subs/mewnet-subs.exe` — PE32+ x86-64.
+- `dist/windows/mewnet.dll` — PE32+ x86-64;
+- `build-mingw/apps/mewnet-subs/mewnet-subs.exe` — PE32+ x86-64.
 
 Запуск под Wine не проверялся.
 
@@ -487,7 +487,7 @@ exit_ms=108
 
 ### 13.4. Общий agent
 
-`mewnet_agent` в `libmewnet_subs` используется GTK4 и CLI/TUI. Офлайновый
+`mewnet_agent` в `libmewnet` используется GTK4 и CLI/TUI. Офлайновый
 тест `make test-agent` (ранее `test-gtk-agent`) проходит 19/19 на CLI:
 
 ```text

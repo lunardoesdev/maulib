@@ -2,7 +2,7 @@
 set -eu
 
 DB="${1:-data/subs.db}"
-BIN="${MEWNET_SUBS_BIN:-build/subscriptions/mewnet-subs}"
+BIN="${MEWNET_SUBS_BIN:-build/apps/mewnet-subs/mewnet-subs}"
 SEED="$(dirname "$0")/seed.txt"
 
 mkdir -p "$(dirname "$DB")"

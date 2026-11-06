@@ -65,8 +65,8 @@ C-библиотека подписок:
 
 ```bash
 make subs
-# build/libs/mewnet-subs/libmewnet_subs.so
-# build/libs/mewnet-subs/mewnet-subs
+# dist/libmewnet.so — Go-ядро + C-подписки + SQLite в одной библиотеке
+# build/apps/mewnet-subs/mewnet-subs
 ```
 
 GUI на Odin/raylib:
@@ -80,7 +80,7 @@ make gui
 
 - `dist/libmewnet.so` — библиотека;
 - `dist/libmewnet.h` — заголовок, сгенерированный cgo;
-- `libs/mewnet/include/mewnet.h` и `mewnet_types.h` — публичные заголовки
+- `libs/mewnet/cmd/mewnet/mewnet.h` и `mewnet_types.h` — публичные заголовки
   (используйте их; `mewnet.h` подключает `mewnet_types.h`).
 
 `-p=2` ограничивает параллелизм: mihomo большой, на машинах с 1–2 ГБ RAM
@@ -89,7 +89,7 @@ make gui
 ## Использование из C
 
 ```bash
-cc app.c -Ilibs/mewnet/include -Ldist -lmewnet -Wl,-rpath,'$ORIGIN' -o app
+cc app.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet -Wl,-rpath,'$ORIGIN' -o app
 ```
 
 `$ORIGIN` нужен, чтобы `libmewnet.so` находилась рядом с бинарником. Иначе
@@ -115,8 +115,8 @@ make build-mingw-core
 # dist/windows/mewnet.def
 
 make subs-mingw
-# build-mingw/libs/mewnet-subs/libmewnet_subs.dll
-# build-mingw/libs/mewnet-subs/mewnet-subs.exe
+# dist/windows/mewnet.dll
+# build-mingw/build/apps/mewnet-subs/mewnet-subs.exe
 ```
 
 `subs-mingw` использует `cmake/toolchains/mingw-x86_64.cmake`.
