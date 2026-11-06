@@ -132,13 +132,13 @@ static void options_default(Options* options) {
     options->timeout_ms = 4000;
     options->fetch_interval_sec = 3600;
     options->slow_interval_sec = 24;
-    options->pool_target = 4;
+    options->pool_target = 12;
     options->health_interval_sec = 6;
     options->health_timeout_ms = 2500;
     options->health_url = strdup("https://lua.org");
     options->health_expected = strdup("200");
-    options->test_url = strdup("https://lua.org");
-    options->test_expected = strdup("200");
+    options->test_url = strdup("https://www.gstatic.com/generate_204");
+    options->test_expected = strdup("204");
 }
 
 static void options_free(Options* options) {

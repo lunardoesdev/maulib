@@ -275,6 +275,11 @@ MEWNET_SUBS_API mewnet_subs_test_result mewnet_subs_record_test(mewnet_subs* db,
                                                              bool alive,
                                                              unsigned delay_ms,
                                                              const char* error_text);
+/* Health is a routing signal, not a definitive liveness test: it does not
+ * change `alive`, it only affects selection order. */
+MEWNET_SUBS_API mewnet_error mewnet_subs_record_health(mewnet_subs* db,
+                                                       int64_t proxy_id,
+                                                       bool ok);
 
 /* Shared rate limiter. Called automatically by fetch and test_next. */
 MEWNET_SUBS_API mewnet_error mewnet_subs_rate_limit_wait(mewnet_subs* db);

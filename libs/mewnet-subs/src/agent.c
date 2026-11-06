@@ -67,7 +67,7 @@ mewnet_agent_config mewnet_agent_config_default(void) {
     config.concurrency = 70;
     config.fetch_interval_sec = 3600;
     config.slow_interval_sec = 24;
-    config.pool_target = 4;
+    config.pool_target = 12;
     config.health_interval_sec = 6;
     config.health_timeout_ms = 2500;
     config.health_url = "https://lua.org";
@@ -227,15 +227,15 @@ static bool agent_health_check(mewnet_agent* agent) {
 }
 
 static void agent_mark_current_dead(mewnet_agent* agent, const char* reason) {
+    (void)reason;
     int64_t id;
     char name[MEWNET_NAME_MAX];
     agent_copy_current(agent, &id, name, sizeof(name), NULL, 0, NULL, 0, NULL, NULL, NULL);
     if (id == 0) {
         return;
     }
-    mewnet_subs_record_test(agent->cfg.db, id, false, 0, reason);
-    agent_log(agent, "HEALTH FAIL id=%lld name=%s", (long long)id,
-              name[0] != '\0' ? name : "(unknown)");
+    agent_log(agent, "HEALTH FAIL id=%lld name=%s (kept alive)",
+              (long long)id, name[0] != '\0' ? name : "(unknown)");
     agent_clear_current(agent);
 }
 
@@ -656,8 +656,18 @@ static void* agent_thread_main(void* data) {
                 recent_failures += bits & 1u;
             }
             if (healthy) {
+                int64_t current = 0;
+                agent_copy_current(agent, &current, NULL, 0, NULL, 0, NULL, 0, NULL, NULL, NULL);
+                if (current != 0) {
+                    mewnet_subs_record_health(agent->cfg.db, current, true);
+                }
                 agent->next_health_ms = now + (int64_t)agent->cfg.health_interval_sec * 1000;
             } else {
+                int64_t current = 0;
+                agent_copy_current(agent, &current, NULL, 0, NULL, 0, NULL, 0, NULL, NULL, NULL);
+                if (current != 0) {
+                    mewnet_subs_record_health(agent->cfg.db, current, false);
+                }
                 agent_log(agent, "HEALTH FAIL recent=%u/3", recent_failures);
                 if (recent_failures >= 2) {
                     agent_mark_current_dead(agent, "health check failed");
@@ -714,7 +724,7 @@ mewnet_agent* mewnet_agent_start(const mewnet_agent_config* config,
     agent->cfg = *config;
     agent->cfg.batch = config->batch > 0 ? config->batch : 70;
     agent->cfg.concurrency = config->concurrency > 0 ? config->concurrency : 70;
-    agent->cfg.pool_target = config->pool_target > 0 ? config->pool_target : 4;
+    agent->cfg.pool_target = config->pool_target > 0 ? config->pool_target : 12;
     agent->cfg.health_interval_sec = config->health_interval_sec > 0
                                          ? config->health_interval_sec : 6;
     agent->cfg.health_timeout_ms = config->health_timeout_ms > 0

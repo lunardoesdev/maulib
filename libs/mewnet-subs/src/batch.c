@@ -225,7 +225,7 @@ mewnet_error mewnet_subs_first_alive(mewnet_subs* db, int64_t group_id,
     subs_clear_error(&err);
     const char* sql =
         "SELECT id FROM proxies WHERE alive=1 AND (?=0 OR group_id=?)"
-        " ORDER BY rating DESC,"
+        " ORDER BY health_failures ASC, rating DESC,"
         " CASE WHEN last_delay_ms IS NULL OR last_delay_ms<=0"
         "      THEN 2147483647 ELSE last_delay_ms END ASC,"
         " last_tested_at DESC, id ASC LIMIT 1";
@@ -268,7 +268,7 @@ mewnet_error mewnet_subs_random_best_alive(mewnet_subs* db, int64_t group_id,
         "SELECT id FROM ("
         " SELECT id FROM proxies"
         " WHERE alive=1 AND (?=0 OR group_id=?) AND id<>? AND id<>?"
-        " ORDER BY rating DESC,"
+        " ORDER BY health_failures ASC, rating DESC,"
         " CASE WHEN last_delay_ms IS NULL OR last_delay_ms<=0"
         "      THEN 2147483647 ELSE last_delay_ms END ASC,"
         " id ASC"

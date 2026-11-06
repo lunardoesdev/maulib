@@ -50,6 +50,7 @@ static const char* k_proxies_schema =
     " server TEXT NOT NULL DEFAULT '',"
     " port INTEGER NOT NULL DEFAULT 0,"
     " rating INTEGER NOT NULL DEFAULT 0,"
+    " health_failures INTEGER NOT NULL DEFAULT 0,"
     " alive INTEGER NOT NULL DEFAULT 0,"
     " manual INTEGER NOT NULL DEFAULT 0,"
     " last_tested_at INTEGER,"
@@ -562,6 +563,14 @@ static int subs_identity_backfill(mewnet_subs* db, mewnet_error* err) {
 
 static int subs_migrate(mewnet_subs* db, int64_t default_group, mewnet_error* err) {
     /* v1 did not have manual. */
+    if (!table_has_column(db->db, "proxies", "health_failures")) {
+        if (subs_db_exec(db->db,
+                         "ALTER TABLE proxies ADD COLUMN health_failures INTEGER NOT NULL DEFAULT 0;",
+                         err) != 0) {
+            return -1;
+        }
+    }
+
     if (!table_has_column(db->db, "proxies", "identity_hash")) {
         if (subs_db_exec(db->db,
                          "ALTER TABLE proxies ADD COLUMN identity_hash BLOB;",

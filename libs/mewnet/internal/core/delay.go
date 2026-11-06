@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/metacubex/http"
 	"github.com/metacubex/mihomo/adapter"
 	"github.com/metacubex/mihomo/common/convert"
 	"github.com/metacubex/mihomo/common/utils"
+	"github.com/metacubex/mihomo/component/ca"
 	C "github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/tunnel"
 )
@@ -198,6 +199,10 @@ func safeURLTestGet(ctx context.Context, proxy C.Proxy, target string, expected 
 	}
 	defer instance.Close()
 
+	tlsConfig, err := ca.GetTLSConfig(ca.Option{})
+	if err != nil {
+		return 0, err
+	}
 	transport := &http.Transport{
 		DialContext: func(context.Context, string, string) (net.Conn, error) {
 			return instance, nil
@@ -206,6 +211,7 @@ func safeURLTestGet(ctx context.Context, proxy C.Proxy, target string, expected 
 		IdleConnTimeout:       time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: time.Second,
+		TLSClientConfig:       tlsConfig,
 		DisableKeepAlives:     true,
 	}
 	client := &http.Client{

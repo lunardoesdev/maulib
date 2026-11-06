@@ -58,13 +58,13 @@ Full specification and failure matrix:
 --timeout MS           per-proxy timeout (default 4000)
 --fetch-interval S     subscription refresh interval (default 3600)
 --slow-interval S      delay between checks when a proxy works (default 24)
---pool-target N        verified proxies to keep ready (default 4)
+--pool-target N        verified proxies to keep ready (default 12)
 --health-interval S    active proxy health check period (default 6)
 --health-timeout MS    active proxy health check timeout (default 2500)
 --health-url URL       health check URL (default https://lua.org)
 --health-expected CODE expected health status (default 200)
---test-url URL         discovery test URL (default https://lua.org)
---test-expected CODE   discovery expected status (default 200)
+--test-url URL         discovery test URL (default gstatic 204)
+--test-expected CODE   discovery expected status (default 204)
 --screenshot PATH      render the window to PNG and exit (UI smoke test)
 ```
 

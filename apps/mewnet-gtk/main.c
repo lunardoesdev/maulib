@@ -861,13 +861,13 @@ static void options_init(Options* options) {
     options->timeout_ms = 4000;
     options->fetch_interval_sec = 3600;
     options->slow_interval_sec = 24;
-    options->pool_target = 4;
+    options->pool_target = 12;
     options->health_interval_sec = 6;
     options->health_timeout_ms = 2500;
     options->health_url = g_strdup("https://lua.org");
     options->health_expected = g_strdup("200");
-    options->test_url = g_strdup("https://lua.org");
-    options->test_expected = g_strdup("200");
+    options->test_url = g_strdup("https://www.gstatic.com/generate_204");
+    options->test_expected = g_strdup("204");
     options->urls = g_ptr_array_new_with_free_func(g_free);
 }
 
@@ -952,7 +952,7 @@ static bool parse_options(int argc, char** argv, Options* options, GError** erro
     if (options->timeout_ms <= 0) options->timeout_ms = 4000;
     if (options->fetch_interval_sec <= 0) options->fetch_interval_sec = 3600;
     if (options->slow_interval_sec <= 0) options->slow_interval_sec = 24;
-    if (options->pool_target <= 0) options->pool_target = 4;
+    if (options->pool_target <= 0) options->pool_target = 12;
     if (options->health_interval_sec <= 0) options->health_interval_sec = 6;
     if (options->health_timeout_ms <= 0) options->health_timeout_ms = 2500;
     return true;
