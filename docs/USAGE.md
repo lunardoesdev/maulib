@@ -463,7 +463,8 @@ mewnet_agent_stop(agent);             /* waits for the thread */
 
 `on_state` receives a snapshot with the active proxy, counters (`proxies`,
 `alive`, `untested`, `subscriptions`) and `ready`. Both callbacks run on agent
-threads; treat them as read-only notifications.
+threads; treat them as read-only notifications. `mewnet_agent_stop` frees the
+agent, so read the snapshot with `mewnet_agent_get_snapshot` before stopping.
 
 The policy behind the agent (health interval, failure threshold, pool size,
 switch order) is documented in [`GTK_RELIABILITY.md`](GTK_RELIABILITY.md).

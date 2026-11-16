@@ -304,125 +304,372 @@ mixed port. In your own program the same pieces are `mewnet_subs_*` plus
 
 ## C API: subscriptions, storage and the agent
 
-The storage layer is part of `libmewnet` and declared in
-[`mewnet_subs.h`](libs/mewnet/cmd/mewnet/mewnet_subs.h). SQLite is compiled in
-(FTS5 included), so there is no separate storage library, no schema setup step
-and nothing to install: `mewnet_subs_open` creates the file and migrates it.
+Everything here is declared in
+[`mewnet_subs.h`](libs/mewnet/cmd/mewnet/mewnet_subs.h) and ships inside
+`libmewnet`. SQLite is compiled in (FTS5 included): `mewnet_subs_open` creates
+the file, migrates the schema and sets up WAL, so there is no separate storage
+library and no SQL to run at install time.
 
-### Storage
+The examples below are complete programs. Each one compiles with:
 
-| Function | What it does |
-|---|---|
-| `mewnet_subs_config_default()` | config with defaults: test URL `generate_204`, 5 s timeout, 10 requests / 240 s, 6 h fetch interval, UA `mewnet-subs/0.2` |
-| `mewnet_subs_open(&config)` | open or create the database; returns `mewnet_subs*` plus a `mewnet_error` |
-| `mewnet_subs_close(db)` | close the handle and its statements |
-| `mewnet_subs_clone(db)` | second connection with the same config, for a fetch or test worker thread |
-| `mewnet_subs_get_stats(db)` | one call returns `subscriptions`, `proxies`, `alive`, `dead`, `tests` |
+```bash
+cc example.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet \
+   -Wl,-rpath,"$PWD/dist" -o example
+```
 
-`mewnet_subs_config` fields: `db_path` (required), `user_agent`, `test_url`,
-`test_expected`, `test_timeout_ms`, `request_limit` (0 disables the limiter),
-`request_window_seconds`, `default_fetch_interval_sec`.
+### Opening a database and filling it from a subscription
 
-### Groups
+`mewnet_subs_config_default()` gives you a working configuration; only `db_path`
+is required. `mewnet_subs_open` returns a handle and an error, and every later
+call reports its own result, so failures never arrive as exceptions or globals.
 
-| Function | What it does |
-|---|---|
-| `mewnet_subs_load_groups` / `mewnet_subs_unload_groups` | all groups as an array |
-| `mewnet_subs_default_group(&id)` | id of the `All` group, created on demand |
-| `mewnet_subs_add_group(name, priority)` | create a group |
-| `mewnet_subs_remove_group(id)` | delete a group and everything in it |
-| `mewnet_subs_set_group_priority(id, priority)` | change ordering |
-| `mewnet_subs_set_subscription_group(sub_id, group_id)` | move a subscription between groups |
+```c
+/* Add one subscription, fetch it, report what landed in the database. */
+#include <stdio.h>
+#include "mewnet_subs.h"
 
-### Subscriptions
+int main(void) {
+    /* Defaults: test URL generate_204, 5 s timeout, 10 requests per 240 s,
+       6 h refresh interval. Override only what you need. */
+    mewnet_subs_config config = mewnet_subs_config_default();
+    config.db_path = "data/subs.db";   /* created and migrated on first open */
+    config.request_limit = 0;          /* this example makes a single request */
 
-| Function | What it does |
-|---|---|
-| `mewnet_subs_add_subscription(url, priority, name)` | add to the default group |
-| `mewnet_subs_add_subscription_in_group(group, url, priority, name)` | add to a specific group |
-| `mewnet_subs_remove_subscription(id)` | delete the URL and its configs |
-| `mewnet_subs_set_priority(id, priority)` / `mewnet_subs_set_enabled(id, bool)` | scheduling hints |
-| `mewnet_subs_load_subscriptions` / `..._in_group` / `..._page(group, limit, offset)` | list; the page variant is what UIs should use; release with `mewnet_subs_unload_subscriptions` |
-| `mewnet_subs_count_subscriptions(group, &n)` | SQL count without loading rows |
-| `mewnet_subs_max_last_fetch(group, &ts)` | newest fetch timestamp |
-| `mewnet_subs_next_subscription_id(group, unfetched_only, &id)` | next candidate to refresh |
+    mewnet_subs_open_result opened = mewnet_subs_open(&config);
+    if (opened.db == NULL) {
+        fprintf(stderr, "open: %s\n", opened.error.message);
+        return 1;
+    }
+    mewnet_subs *db = opened.db;
 
-A `mewnet_subscription` carries the URL, name, priority, `last_status`,
-`failure_count`, `etag`, `last_modified`, `userinfo` and `last_error` — enough to
-render a status column without touching the database yourself.
+    /* The default "All" group always exists; its id is what other calls take. */
+    int64_t group = 0;
+    mewnet_error err = mewnet_subs_default_group(db, &group);
+    if (err.code != MEWNET_ERROR_NONE) {
+        fprintf(stderr, "group: %s\n", err.message);
+        mewnet_subs_close(db);
+        return 1;
+    }
 
-### Stored proxies
+    err = mewnet_subs_add_subscription_in_group(db, group,
+                                                "https://example.com/sub.txt",
+                                                100 /* priority */, "main");
+    if (err.code != MEWNET_ERROR_NONE) {
+        fprintf(stderr, "add: %s\n", err.message);
+        mewnet_subs_close(db);
+        return 1;
+    }
 
-| Function | What it does |
-|---|---|
-| `mewnet_subs_load_proxies(group, limit, offset)` | full rows including the share link; release with `mewnet_subs_unload_proxies` |
-| `mewnet_subs_load_proxy_summaries(group, limit, offset)` | same without the link — cheap pages for a UI |
-| `mewnet_subs_get_proxy(id, &out)` | one row by id |
-| `mewnet_subs_add_proxy(group, link)` | insert a manual config (survives subscription refresh) |
-| `mewnet_subs_remove_proxy(id)` | delete one config |
-| `mewnet_subs_count_proxies(group, &n)` | SQL count |
+    /* add_* does not return the new id, so ask for the next unfetched one. */
+    int64_t sub = 0;
+    err = mewnet_subs_next_subscription_id(db, group, true /* unfetched_only */, &sub);
+    if (err.code != MEWNET_ERROR_NONE || sub == 0) {
+        fprintf(stderr, "no subscription to fetch: %s\n", err.message);
+        mewnet_subs_close(db);
+        return 1;
+    }
 
-### Fetching
+    /* Downloads, parses plain or base64 bodies, deduplicates and stores. */
+    mewnet_subs_fetch_result fetched = mewnet_subs_fetch(db, sub);
+    if (fetched.error.code != MEWNET_ERROR_NONE) {
+        fprintf(stderr, "fetch: %s\n", fetched.error.message);
+    } else {
+        printf("HTTP %d: added=%zu updated=%zu removed=%zu skipped=%zu\n",
+               fetched.http_status, fetched.added, fetched.updated,
+               fetched.removed, fetched.skipped);
+    }
 
-| Function | What it does |
-|---|---|
-| `mewnet_subs_fetch(id)` | download one subscription, obeying the shared rate limiter |
-| `mewnet_subs_fetch_now(id)` | same, skipping the limiter (discovery fallback) |
-| `mewnet_subs_fetch_due()` | fetch whichever subscription is due next |
-| `mewnet_subs_cancel_fetch(db)` | abort an in-flight fetch; safe from another thread |
+    mewnet_subs_stats stats = mewnet_subs_get_stats(db);
+    printf("%lld subscriptions, %lld proxies (%lld alive, %lld dead), %lld tests\n",
+           (long long)stats.subscriptions, (long long)stats.proxies,
+           (long long)stats.alive, (long long)stats.dead, (long long)stats.tests);
 
-The result reports `http_status`, `added`, `updated`, `removed`, `skipped`.
-`etag`/`last_modified` give conditional requests, and `generation` tracking
-deletes configs that disappeared from the subscription.
+    mewnet_subs_close(db);
+    return 0;
+}
+```
 
-### Testing, rating and selection
+`mewnet_subs_fetch` respects the shared request budget; `mewnet_subs_fetch_now`
+skips it, and `mewnet_subs_fetch_due` picks whichever subscription is due next —
+that is what a scheduler needs. A second thread should get its own connection
+with `mewnet_subs_clone(db)` rather than sharing this handle.
 
-| Function | What it does |
-|---|---|
-| `mewnet_subs_test_batch(db, instance, group, limit, concurrency)` | test many configs concurrently; returns `tested`, `alive` and the first working one (`first_alive_proxy_id/link/name`) |
-| `mewnet_subs_test_next(db, instance)` | test one candidate, waiting for the rate limiter |
-| `mewnet_subs_test_next_now` / `mewnet_subs_test_candidate_now(scope)` | same without waiting; `scope` is `ANY`, `UNTESTED` or `NOT_ALIVE` |
-| `mewnet_subs_test_proxy(db, instance, id)` | test one known config |
-| `mewnet_subs_record_test(id, alive, delay, error)` | store an external test result and update the rating |
-| `mewnet_subs_record_health(id, ok)` | health signal only: affects selection order, never sets `alive=0` |
-| `mewnet_subs_count_untested(group, &n)` / `mewnet_subs_count_alive(group, &n)` | counters for scheduling |
-| `mewnet_subs_first_alive(group, &out)` / `mewnet_subs_next_alive(group, exclude, &out)` | deterministic picks |
-| `mewnet_subs_random_best_alive(group, exclude, avoid, candidates, &out)` | random pick among the best rated (then fastest) alive nodes |
+### Testing stored configs and routing traffic through the winner
 
-### Rate limiter
+Testing is done by the core (`mewnet_instance`), results and ratings are written
+by the storage layer. `mewnet_subs_test_batch` checks many configs at once and
+stops as soon as one works.
 
-`mewnet_subs_rate_limit_wait(db)` blocks until the shared request budget allows
-another request. `fetch` and `test_next` call it for you; call it yourself only
-when you drive requests directly with `*_now` variants.
+```c
+/* Test stored configs, then route the local mixed inbound through the best. */
+#include <stdio.h>
+#include "mewnet.h"
+#include "mewnet_subs.h"
 
-### Discovery agent
+int main(void) {
+    mewnet_config core_config = mewnet_config_default();
+    core_config.mixed_port = 0;                 /* pick a free local port */
+    mewnet_init_result init = mewnet_init(&core_config);
+    if (init.instance == NULL) {
+        fprintf(stderr, "core: %s\n", init.error.message);
+        return 1;
+    }
 
-| Function | What it does |
-|---|---|
-| `mewnet_agent_config_default()` | defaults for the loop below |
-| `mewnet_agent_start(&config, callbacks)` | start the agent thread |
-| `mewnet_agent_stop(agent)` | stop and join |
-| `mewnet_agent_request_switch(agent)` | "change proxy" from a UI |
-| `mewnet_agent_request_subscription(agent, id)` | fetch this subscription now |
-| `mewnet_agent_get_snapshot(agent)` | current node and counters without waiting for a callback |
+    mewnet_subs_config config = mewnet_subs_config_default();
+    config.db_path = "data/subs.db";
+    config.request_limit = 0;                   /* the batch paces itself */
+    mewnet_subs_open_result opened = mewnet_subs_open(&config);
+    if (opened.db == NULL) {
+        fprintf(stderr, "open: %s\n", opened.error.message);
+        mewnet_close(init.instance);
+        return 1;
+    }
 
-`mewnet_agent_config`: `db`, `milib` (the core instance), `group_id`,
-`proxy_port`, `batch`, `concurrency`, `fetch_interval_sec`, `slow_interval_sec`,
-`pool_target`, `health_interval_sec`, `health_timeout_ms`, `health_url`,
-`health_expected`, `run_seconds` (0 = run until stopped).
+    int64_t group = 0;
+    mewnet_subs_default_group(opened.db, &group);
 
-Callbacks are `log(message, user)` and `state(&snapshot, user)`. The snapshot has
-the active `proxy_id`, `name`, `protocol`, `server`, `port`, `delay_ms`, plus
-`subscriptions`, `proxies`, `alive`, `untested` and `ready`.
+    /* Up to 200 configs, 32 checks in parallel. Cancelled checks report
+       MEWNET_ERROR_CANCELLED and must not be read as failures. */
+    mewnet_subs_batch_test_result batch =
+        mewnet_subs_test_batch(opened.db, init.instance, group, 200, 32);
+    printf("tested=%zu alive=%zu first=%s\n",
+           batch.tested, batch.alive, batch.first_alive_name);
 
-### SQLite specifics
+    /* Highest rating, then lowest delay; the pick is random inside that
+       window of 5 candidates so repeated calls do not stick to one node. */
+    mewnet_subs_proxy chosen;
+    mewnet_error pick = mewnet_subs_random_best_alive(opened.db, group,
+                                                      0 /* exclude id */,
+                                                      0 /* avoid id */,
+                                                      5 /* candidates */,
+                                                      &chosen);
+    if (pick.code != MEWNET_ERROR_NONE) {
+        printf("nothing alive yet: %s\n", pick.message);
+    } else {
+        mewnet_add_options add = mewnet_add_options_default();
+        add.select_proxy = true;                /* becomes the main proxy */
+        mewnet_add_proxy(init.instance, chosen.link, &add);
+        printf("http://127.0.0.1:%d -> %s (%u ms)\n",
+               mewnet_get_status(init.instance).mixed_port,
+               chosen.name, chosen.last_delay_ms);
+    }
 
-The file is plain SQLite: WAL journal, `busy_timeout=5000`, 4 MB page cache,
-`temp_store=FILE`, foreign keys with `ON DELETE CASCADE`, FTS5 available for
-your own virtual tables. Tables: `subscription_groups`, `subscriptions`,
-`proxies`, `proxy_sources`, `test_events` — schema and indexes are in
-[`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md#sqlite), usage patterns in
-[`docs/USAGE.md`](docs/USAGE.md#the-database).
+    mewnet_subs_close(opened.db);
+    mewnet_close(init.instance);
+    return 0;
+}
+```
+
+For a single step instead of a batch, use `mewnet_subs_test_next` (waits for the
+rate limiter) or `mewnet_subs_test_next_now` (does not). `mewnet_subs_test_proxy`
+tests one known id, and `mewnet_subs_record_test` stores a result you measured
+elsewhere. Health is separate: `mewnet_subs_record_health` orders candidates but
+never flips `alive`.
+
+### Paging through stored configs
+
+A database with tens of thousands of configs must never be loaded whole. The
+summary variant returns rows without the share link, which is what a list view
+needs; `mewnet_subs_get_proxy` fetches the full row for the selected item.
+
+```c
+/* Page through stored configs: 50 rows per page, no full-table load. */
+#include <stdio.h>
+#include "mewnet_subs.h"
+
+int main(void) {
+    mewnet_subs_config config = mewnet_subs_config_default();
+    config.db_path = "data/subs.db";
+    mewnet_subs_open_result opened = mewnet_subs_open(&config);
+    if (opened.db == NULL) {
+        fprintf(stderr, "open: %s\n", opened.error.message);
+        return 1;
+    }
+
+    int64_t group = 0;
+    mewnet_subs_default_group(opened.db, &group);
+
+    size_t offset = 0;
+    for (;;) {
+        mewnet_subs_proxy_summary_list page =
+            mewnet_subs_load_proxy_summaries(opened.db, group, 50, offset);
+        if (page.error.code != MEWNET_ERROR_NONE) {
+            fprintf(stderr, "page: %s\n", page.error.message);
+            mewnet_subs_unload_proxy_summaries(page);
+            break;
+        }
+        if (page.count == 0) {
+            mewnet_subs_unload_proxy_summaries(page);   /* done */
+            break;
+        }
+        for (size_t i = 0; i < page.count; i++) {
+            mewnet_subs_proxy_summary *p = &page.items[i];
+            printf("%-32s %-8s %s:%d rating=%d alive=%d %u ms\n",
+                   p->name, p->protocol, p->server, p->port,
+                   p->rating, p->alive, p->last_delay_ms);
+        }
+        offset += page.count;
+        mewnet_subs_unload_proxy_summaries(page);       /* lists are library-owned */
+    }
+
+    /* Full row (with the link) only for the item the user selected. */
+    mewnet_subs_proxy full;
+    if (mewnet_subs_get_proxy(opened.db, 1, &full).code == MEWNET_ERROR_NONE) {
+        printf("first row link: %.60s...\n", full.link);
+    }
+
+    mewnet_subs_close(opened.db);
+    return 0;
+}
+```
+
+`mewnet_subs_count_proxies`, `mewnet_subs_count_alive` and
+`mewnet_subs_count_untested` return counters as SQL aggregates, so a status bar
+never needs the rows. Manual configs added with `mewnet_subs_add_proxy` survive
+subscription refreshes; `mewnet_subs_remove_proxy` deletes by id.
+
+### Running the discovery agent
+
+The agent is the loop the CLI and the GTK panel use: refresh subscriptions on
+schedule, test untested configs, keep a pool of working nodes, health-check the
+active one and fail over.
+
+```c
+/* Run the agent for 30 seconds and print what it does. */
+#include <stdio.h>
+#include <unistd.h>
+#include "mewnet.h"
+#include "mewnet_subs.h"
+
+/* Both callbacks run on agent threads: print and return, do not tear anything
+   down from inside them. */
+static void on_log(const char *message, void *user) {
+    (void)user;
+    printf("[agent] %s\n", message);
+}
+
+static void on_state(const mewnet_agent_snapshot *s, void *user) {
+    (void)user;
+    if (s->proxy_id == 0) {
+        return;                    /* nothing selected yet */
+    }
+    printf("[state] %s (%s %s:%d) %u ms | alive=%lld untested=%lld ready=%d\n",
+           s->name, s->protocol, s->server, s->port, s->delay_ms,
+           (long long)s->alive, (long long)s->untested, s->ready ? 1 : 0);
+}
+
+int main(void) {
+    mewnet_config core_config = mewnet_config_default();
+    core_config.mixed_port = 0;
+    mewnet_init_result init = mewnet_init(&core_config);
+    if (init.instance == NULL) {
+        fprintf(stderr, "core: %s\n", init.error.message);
+        return 1;
+    }
+
+    mewnet_subs_config config = mewnet_subs_config_default();
+    config.db_path = "data/subs.db";
+    mewnet_subs_open_result opened = mewnet_subs_open(&config);
+    if (opened.db == NULL) {
+        fprintf(stderr, "open: %s\n", opened.error.message);
+        mewnet_close(init.instance);
+        return 1;
+    }
+
+    int64_t group = 0;
+    mewnet_subs_default_group(opened.db, &group);
+
+    mewnet_agent_config ac = mewnet_agent_config_default();
+    ac.db = opened.db;
+    ac.milib = init.instance;
+    ac.group_id = group;
+    ac.proxy_port = mewnet_get_status(init.instance).mixed_port;
+    ac.batch = 50;               /* fast discovery batch */
+    ac.concurrency = 30;         /* parallel checks inside a batch */
+    ac.pool_target = 4;          /* working nodes to keep in reserve */
+    ac.health_interval_sec = 6;
+    ac.health_url = "https://www.gstatic.com/generate_204";
+    ac.health_expected = "204";
+
+    mewnet_agent_callbacks callbacks = {on_log, on_state, NULL};
+    mewnet_agent *agent = mewnet_agent_start(&ac, callbacks);
+    if (agent == NULL) {
+        fprintf(stderr, "agent failed to start\n");
+        mewnet_subs_close(opened.db);
+        mewnet_close(init.instance);
+        return 1;
+    }
+
+    for (int i = 0; i < 30; i++) {
+        sleep(1);
+        /* A UI would call mewnet_agent_request_switch(agent) from a button. */
+    }
+
+    /* Read the state while the agent is alive: stop frees the handle. */
+    mewnet_agent_snapshot snapshot = mewnet_agent_get_snapshot(agent);
+    printf("final: %s ready=%d\n", snapshot.name, snapshot.ready ? 1 : 0);
+
+    mewnet_agent_stop(agent);    /* stops the thread, closes its connections, frees the handle */
+
+    mewnet_subs_close(opened.db);
+    mewnet_close(init.instance);
+    return 0;
+}
+```
+
+`run_seconds` in the config stops the agent by itself; `0` means "run until
+`mewnet_agent_stop`". `mewnet_agent_request_subscription(agent, id)` forces a
+fetch of one subscription, which is what "refresh" buttons use.
+
+### Rules that apply to all of it
+
+- **Errors are values.** `mewnet_error` has `code` and `message`; `mewnet_init`
+  and `mewnet_subs_open` return it in the result struct, other functions return
+  the code and push the text to the log callback. Check `.code == MEWNET_ERROR_NONE`.
+- **Ownership.** `mewnet_subs_close(db)` closes a connection; every
+  `mewnet_subs_load_*` result goes back through the matching `mewnet_subs_unload_*`;
+  `mewnet_agent_stop` frees the agent thread; core handles belong to `mewnet_close`.
+- **Threads.** One `mewnet_subs*` per thread — take a second one with
+  `mewnet_subs_clone`. The agent owns its own connection. Callbacks must not call
+  `mewnet_agent_stop`, `mewnet_subs_close` or `mewnet_close`.
+- **Defaults you can rely on:** 10 requests per 240 s (`request_limit`,
+  `request_window_seconds`), 6 h refresh (`default_fetch_interval_sec`), test URL
+  `generate_204` with a 5 s timeout.
+
+Function families, if you need to look something up quickly: storage
+(`config_default`, `open`, `close`, `clone`, `get_stats`), groups (`load_groups`,
+`add_group`, `remove_group`, `set_group_priority`, `set_subscription_group`,
+`default_group`), subscriptions (`add_subscription*`, `remove_subscription`,
+`set_priority`, `set_enabled`, `load_subscriptions*`, `count_subscriptions`,
+`max_last_fetch`, `next_subscription_id`), configs (`load_proxies`,
+`load_proxy_summaries`, `get_proxy`, `add_proxy`, `remove_proxy`,
+`count_proxies`), fetching (`fetch`, `fetch_now`, `fetch_due`, `cancel_fetch`),
+testing (`test_batch`, `test_next`, `test_next_now`, `test_candidate_now`,
+`test_proxy`, `record_test`, `record_health`), selection (`first_alive`,
+`next_alive`, `random_best_alive`), limiter (`rate_limit_wait`), agent
+(`agent_config_default`, `agent_start`, `agent_stop`, `agent_request_switch`,
+`agent_request_subscription`, `agent_get_snapshot`).
+
+### The SQLite side
+
+The file is plain SQLite with WAL, `busy_timeout=5000`, a 4 MB page cache,
+`temp_store=FILE`, foreign keys with `ON DELETE CASCADE`, and FTS5 compiled in.
+Tables: `subscription_groups`, `subscriptions`, `proxies`, `proxy_sources`,
+`test_events` — columns and indexes are in
+[`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md#sqlite).
+
+Read it with any tool while the app runs (WAL allows concurrent readers):
+
+```bash
+sqlite3 data/subs.db '.tables'
+sqlite3 data/subs.db 'SELECT protocol, COUNT(*), SUM(alive) FROM proxies GROUP BY protocol;'
+sqlite3 data/subs.db 'SELECT name, rating, last_delay_ms FROM proxies ORDER BY rating DESC LIMIT 5;'
+```
+
+Do not write to the file from another process while the agent is running. If an
+embedder needs its own SQL — an FTS5 index over proxy names, for example — the
+library exports the `sqlite3_*` symbols of this same build, so you can open the
+file and query it without linking a second SQLite copy.
 
 ## Async
 
