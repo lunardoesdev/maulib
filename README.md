@@ -239,9 +239,10 @@ stops answering; `GetMaunetDefaultLink()` always reports what is in use.
 - [`maunet.h`](libs/mewnet/cmd/mewnet/maunet.h) — everything above, with global
   state and link ids.
 
-Use mewnet directly when you need two independent cores (not possible), per-link
-SOCKS5 endpoints, async task objects or explicit handle ownership. Start with
-[`docs/USAGE.md`](docs/USAGE.md); storage details are in
+Use mewnet directly when you need per-link SOCKS5 endpoints, async task objects,
+explicit handle ownership or two isolated instances (the last one is not
+possible — mihomo keeps global state). The full handle-based guide, with complete
+programs, is [`docs/MEWNET.md`](docs/MEWNET.md); storage details are in
 [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
 
 ## Everything else in the repo
@@ -317,6 +318,22 @@ docs/                     usage, building, testing, design notes
 - a panic in a background mihomo goroutine kills the process — run untrusted
   configs in a separate process;
 - the build depends on glibc; for old distributions build in an older image.
+
+## Documentation
+
+- [`docs/MEWNET.md`](docs/MEWNET.md) — the handle-based API: routing model,
+  complete C programs, `SharedVPNLink`, async tasks, clients.
+- [`docs/USAGE.md`](docs/USAGE.md) — task-oriented guide: C, Python, storage,
+  agent, recipes, troubleshooting.
+- [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md) — subscription formats, SQLite
+  schema, rating, rate limit.
+- [`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.md) — per-link SOCKS5 in depth.
+- [`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md) — health checks, failover,
+  pool growth.
+- [`docs/BUILD.md`](docs/BUILD.md) — building, flags, cross-compilation, tests.
+- [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md) — what was measured and where it
+  still falls short.
+- [`docs/PLAN.md`](docs/PLAN.md) — design decisions and the delivery stages.
 
 ## License
 
