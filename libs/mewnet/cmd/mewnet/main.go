@@ -251,6 +251,25 @@ func mewnet_select_proxy(instance *C.mewnet_instance, name *C.char) C.mewnet_err
 	return C.MEWNET_ERROR_NONE
 }
 
+//export mewnet_has_proxy
+func mewnet_has_proxy(instance *C.mewnet_instance, name *C.char) (ok C.bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			logError(fmt.Errorf("panic: %v", r))
+			ok = false
+		}
+	}()
+	if instance == nil || name == nil {
+		return false
+	}
+	c, err := core.Get(uint64(C.mewnet_instance_get_handle(instance)))
+	if err != nil {
+		logError(err)
+		return false
+	}
+	return C.bool(c.Has(goString(name)))
+}
+
 //export mewnet_delay_options_default
 func mewnet_delay_options_default() (out C.mewnet_delay_options) {
 	return out

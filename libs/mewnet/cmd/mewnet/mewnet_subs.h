@@ -172,8 +172,15 @@ MEWNET_SUBS_API void mewnet_subs_unload_proxy_summaries(mewnet_subs_proxy_summar
 
 MEWNET_SUBS_API mewnet_error mewnet_subs_get_proxy(mewnet_subs* db, int64_t proxy_id,
                                                 mewnet_subs_proxy* out);
+/* Same, looked up by the stored name; group_id 0 searches every group. */
+MEWNET_SUBS_API mewnet_error mewnet_subs_get_proxy_by_name(mewnet_subs* db, int64_t group_id,
+                                                           const char* name,
+                                                           mewnet_subs_proxy* out);
 MEWNET_SUBS_API mewnet_error mewnet_subs_add_proxy(mewnet_subs* db, int64_t group_id,
                                                 const char* link);
+/* Same as mewnet_subs_add_proxy, but also returns the stored row id. */
+MEWNET_SUBS_API mewnet_error mewnet_subs_add_proxy_id(mewnet_subs* db, int64_t group_id,
+                                                      const char* link, int64_t* out_id);
 MEWNET_SUBS_API mewnet_error mewnet_subs_remove_proxy(mewnet_subs* db, int64_t proxy_id);
 MEWNET_SUBS_API mewnet_error mewnet_subs_count_proxies(mewnet_subs* db, int64_t group_id,
                                                     int64_t* out_count);

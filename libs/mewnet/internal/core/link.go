@@ -459,6 +459,20 @@ func (c *Core) linkByName(name string) (*SharedLink, bool) {
 	return nil, false
 }
 
+// Has reports whether a proxy with this name is registered in the core.
+func (c *Core) Has(name string) bool {
+	if name == "" {
+		return false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.closed {
+		return false
+	}
+	_, ok := c.entries[name]
+	return ok
+}
+
 // SelectLink makes the link's proxy the selected proxy of the MEWNET group, so
 // traffic entering the shared mixed inbound exits through that link.
 func (c *Core) SelectLink(id uint64) error {

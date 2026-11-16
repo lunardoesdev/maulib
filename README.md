@@ -707,6 +707,91 @@ embedder needs its own SQL — an FTS5 index over proxy names, for example — t
 library exports the `sqlite3_*` symbols of this same build, so you can open the
 file and query it without linking a second SQLite copy.
 
+## C API: maunet, global state with link ids
+
+`maunet` is a raylib-style façade over everything above: one hidden instance,
+one database, one discovery agent, and an id for every link. Application code
+never sees handles — it passes link ids. Header:
+[`maunet.h`](libs/mewnet/cmd/mewnet/maunet.h).
+
+```c
+#include <stdio.h>
+#include "maunet.h"
+
+int main(void) {
+    maunet_settings settings = MaunetSettingsDefault();
+    settings.db_path = "data/app.db";   /* created and migrated on init */
+    settings.mixed_port = 0;            /* free local port */
+    settings.run_agent = true;          /* keep a working pool in the background */
+
+    if (!InitMaunet(&settings)) {
+        fprintf(stderr, "init: %s\n", GetMaunetError());
+        return 1;
+    }
+
+    /* A subscription stores its configs as links; a single link can be added too. */
+    maunet_link_result sub = AddMaunetSubscription("https://example.com/sub.txt");
+    printf("subscription %lld, %lld links known\n", (long long)sub.id,
+           (long long)GetMaunetLinkCount());
+
+    maunet_link_result manual = AddMaunetLink("vless://...");
+    if (manual.id > 0 && SetMaunetLinkAsDefault(manual.id)) {
+        printf("default link: %s, proxy http://127.0.0.1:%d\n",
+               GetMaunetLink(manual.id).name, GetMaunetProxyPort());
+    }
+
+    /* Measure one link; alive, delay and rating are stored with it. */
+    if (!TestMaunetLink(manual.id)) {
+        printf("link is not usable: %s\n", GetMaunetError());
+    }
+
+    maunet_status status = GetMaunetStatus();
+    printf("%lld links, %lld alive, %lld subscriptions, selected %s\n",
+           (long long)status.links, (long long)status.alive,
+           (long long)status.subscriptions, status.selected);
+
+    DeinitMaunet();          /* stops the agent and closes the core */
+    return 0;
+}
+```
+
+Every call reports failures the same way: `false` (or `id == 0`) plus a message
+from `GetMaunetError()`.
+
+**Settings** (`MaunetSettingsDefault` fills all of them): `db_path`,
+`mixed_port`, `log_level`, `user_agent`, `test_url`, `test_expected`,
+`test_timeout_ms`, `health_url`, `health_expected`, `health_timeout_ms`,
+`request_limit`, `request_window_seconds`, `fetch_interval_sec`, `pool_target`,
+`batch`, `concurrency`, `run_agent`. Zero and NULL fields mean "keep the default".
+
+**Functions**
+
+- lifecycle: `MaunetSettingsDefault`, `InitMaunet`, `DeinitMaunet`,
+  `IsMaunetReady`, `GetMaunetError`, `GetMaunetStatus`, `GetMaunetProxyPort`;
+- links: `AddMaunetLink`, `RemoveMaunetLink`, `SetMaunetLinkAsDefault`,
+  `GetMaunetDefaultLink`, `TestMaunetLink`, `GetMaunetLink`,
+  `LoadMaunetLinks`/`UnloadMaunetLinks`, `GetMaunetLinkCount`;
+- subscriptions: `AddMaunetSubscription`, `RemoveMaunetSubscription`,
+  `RefreshMaunetSubscriptions`, `LoadMaunetSubscriptions`/
+  `UnloadMaunetSubscriptions`, `GetMaunetSubscriptionCount`.
+
+**Behaviour that matters**
+
+- a link id is the stored row id, so it survives restarts and is the same value
+  that `LoadMaunetLinks` returns;
+- `AddMaunetLink` writes a manual config: subscriptions never remove it, and
+  `AddMaunetSubscription` never overwrites it;
+- links are registered in the core lazily — `SetMaunetLinkAsDefault` and
+  `TestMaunetLink` do it when needed, so loading ten thousand links costs
+  nothing;
+- the agent may move the selection; `GetMaunetDefaultLink` follows it and
+  returns the id of whatever is selected;
+- `run_agent` requires an inbound (`mixed_port >= 0`);
+- `InitMaunet`/`DeinitMaunet` must come from one thread; the other calls are
+  serialized by a library mutex and may be used from a worker.
+
+Try it: `make test-maunet`.
+
 ## Async
 
 Every check has an async variant: pass a callback, or `NULL` and poll.
@@ -796,6 +881,7 @@ Full toolchain notes, flags and caveats: [`docs/BUILD.md`](docs/BUILD.md).
 |---|---|
 | A proxy on localhost from a subscription | `mewnet-cli` (Quick start) or the GTK panel |
 | Proxy control from C | [`mewnet.h`](libs/mewnet/cmd/mewnet/mewnet.h), [`docs/USAGE.md`](docs/USAGE.md) |
+| Global state and link ids in C (raylib style) | [`maunet.h`](libs/mewnet/cmd/mewnet/maunet.h), section below |
 | Proxy control from Python | [`docs/USAGE.md`](docs/USAGE.md#python) |
 | Proxy control from Go | [`libs/mewnet/README.md`](libs/mewnet/README.md) |
 | Subscription storage and rating | [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md) |
@@ -838,6 +924,7 @@ docs/                     usage, building, testing, design notes
 make test-unit       # ABI and logic through ctypes
 make test-links      # SharedVPNLink without network (auth, errors, destroy)
 make test-c          # C test with #include "mewnet.h"
+make test-maunet     # maunet global-state facade: link ids, defaults, subscriptions
 make test-stress     # 100 add/remove cycles, FD/goroutine/RSS
 make test-agent      # offline failover/recovery test for the agent
 make xray            # download Xray for e2e (into /tmp, not committed)

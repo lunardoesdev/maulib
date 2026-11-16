@@ -40,6 +40,8 @@ mewnet_error_code mewnet_add_proxy(mewnet_instance* instance,
                                  const mewnet_add_options* options);
 mewnet_error_code mewnet_remove_proxy(mewnet_instance* instance, const char* name);
 mewnet_error_code mewnet_select_proxy(mewnet_instance* instance, const char* name);
+/* True when a proxy with this name is registered in the running core. */
+bool mewnet_has_proxy(mewnet_instance* instance, const char* name);
 
 /* Latency tests for an already added proxy (by name) or a raw share link. */
 mewnet_delay_options mewnet_delay_options_default(void);

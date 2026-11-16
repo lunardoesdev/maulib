@@ -1577,8 +1577,38 @@ mewnet_error mewnet_subs_get_proxy(mewnet_subs* db, int64_t proxy_id,
     return subs_make_error(MEWNET_ERROR_NONE, "");
 }
 
-mewnet_error mewnet_subs_add_proxy(mewnet_subs* db, int64_t group_id,
-                                   const char* link) {
+mewnet_error mewnet_subs_get_proxy_by_name(mewnet_subs* db, int64_t group_id,
+                                           const char* name, mewnet_subs_proxy* out) {
+    if (db == NULL || name == NULL || name[0] == '\0' || out == NULL) {
+        return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db, name and out are required");
+    }
+    memset(out, 0, sizeof(*out));
+    sqlite3_stmt* stmt = NULL;
+    mewnet_error err;
+    subs_clear_error(&err);
+    if (subs_db_prepare(db->db, &stmt,
+                        "SELECT id FROM proxies WHERE name=? AND (?=0 OR group_id=?)"
+                        " ORDER BY id ASC LIMIT 1",
+                        &err) != 0) {
+        return err;
+    }
+    subs_db_bind_text(stmt, 1, name);
+    sqlite3_bind_int64(stmt, 2, group_id);
+    sqlite3_bind_int64(stmt, 3, group_id);
+    int rc = sqlite3_step(stmt);
+    int64_t id = rc == SQLITE_ROW ? sqlite3_column_int64(stmt, 0) : 0;
+    sqlite3_finalize(stmt);
+    if (rc != SQLITE_ROW && rc != SQLITE_DONE) {
+        return subs_db_error(db->db, "find proxy by name");
+    }
+    if (id == 0) {
+        return subs_make_error(MEWNET_ERROR_NOT_FOUND, "proxy %s not found", name);
+    }
+    return mewnet_subs_get_proxy(db, id, out);
+}
+
+static mewnet_error add_proxy_impl(mewnet_subs* db, int64_t group_id, const char* link,
+                                 int64_t* out_id) {
     if (db == NULL || link == NULL || link[0] == '\0') {
         return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db and link are required");
     }
@@ -1635,7 +1665,39 @@ mewnet_error mewnet_subs_add_proxy(mewnet_subs* db, int64_t group_id,
     if (rc != SQLITE_DONE) {
         return subs_db_error(db->db, "add proxy");
     }
+
+    if (out_id != NULL) {
+        *out_id = 0;
+        if (subs_db_prepare(db->db, &stmt,
+                            "SELECT id FROM proxies WHERE group_id=? AND link_hash=?"
+                            " ORDER BY id DESC LIMIT 1",
+                            &err) != 0) {
+            return err;
+        }
+        sqlite3_bind_int64(stmt, 1, group_id);
+        subs_db_bind_blob(stmt, 2, hash, (int)sizeof(hash));
+        if (sqlite3_step(stmt) == SQLITE_ROW) {
+            *out_id = sqlite3_column_int64(stmt, 0);
+        }
+        sqlite3_finalize(stmt);
+        if (*out_id == 0) {
+            return subs_make_error(MEWNET_ERROR_FAILED, "added proxy has no id");
+        }
+    }
     return subs_make_error(MEWNET_ERROR_NONE, "");
+}
+
+mewnet_error mewnet_subs_add_proxy(mewnet_subs* db, int64_t group_id, const char* link) {
+    return add_proxy_impl(db, group_id, link, NULL);
+}
+
+mewnet_error mewnet_subs_add_proxy_id(mewnet_subs* db, int64_t group_id, const char* link,
+                                      int64_t* out_id) {
+    if (out_id == NULL) {
+        return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "out_id is required");
+    }
+    *out_id = 0;
+    return add_proxy_impl(db, group_id, link, out_id);
 }
 
 mewnet_error mewnet_subs_remove_proxy(mewnet_subs* db, int64_t proxy_id) {

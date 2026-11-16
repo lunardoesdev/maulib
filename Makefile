@@ -3,6 +3,9 @@
 MISE    ?= mise
 GO      := $(MISE) exec -- go
 CC      := $(MISE) exec -- clang
+# C compiler cgo uses. gcc is always present; clang from mise can only be
+# executed through `mise exec`, which cgo does not go through.
+CGO_CC  ?= gcc
 PYTHON  ?= python3
 
 X11_LIB  := $(shell ldconfig -p 2>/dev/null | awk '/libX11.so.6 /{print $$NF; exit}')
@@ -19,7 +22,7 @@ export CGO_ENABLED = 1
 
 LDFLAGS = -s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33
 
-.PHONY: all deps build build-mingw-core subs subs-mingw gui gtk cli watch discovery test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links test-gtk-agent clean xray
+.PHONY: all deps build build-mingw-core subs subs-mingw gui gtk cli watch discovery test test-maunet test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links test-gtk-agent clean xray
 
 all: build
 
@@ -28,7 +31,7 @@ deps:
 
 build:
 	mkdir -p dist
-	cd libs/mewnet && $(GO) build -p=2 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o ../../dist/libmewnet.so ./cmd/mewnet
+	cd libs/mewnet && CC=$(CGO_CC) $(GO) build -p=2 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o ../../dist/libmewnet.so ./cmd/mewnet
 	@ls -lh dist/libmewnet.so
 
 build-mingw-core:
@@ -115,6 +118,11 @@ test-stress: build
 test-c: build
 	$(CC) tests/c/test_api.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet -Wl,--allow-shlib-undefined -Wl,-rpath,'$$ORIGIN' -o dist/test_api
 	./dist/test_api
+
+# Global-state facade (maunet): link ids, default selection, subscriptions.
+test-maunet: build
+	$(CC) tests/c/test_maunet.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet -Wl,--allow-shlib-undefined -Wl,-rpath,'$$ORIGIN' -o dist/test_maunet
+	./dist/test_maunet
 
 # Ping through the C ABI using a real link:
 #   make test-c-ping MEWNET_TEST_VLESS='vless://...' [MEWNET_PING_URL='http://.../204']
