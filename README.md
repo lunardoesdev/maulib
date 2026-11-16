@@ -128,6 +128,17 @@ curl --socks5-hostname 127.0.0.1:<link_port> \
 `mewnet_link_ping`, `mewnet_link_speed` and `mewnet_link_exit_ip` also measure
 this link specifically, regardless of which proxy is selected.
 
+To make the link the **main** proxy as well — the one the shared inbound uses —
+pass the handle instead of looking the name up:
+
+```c
+mewnet_link_select(created.link);   /* same as mewnet_select_proxy(m, info.name) */
+```
+
+After that, `http://127.0.0.1:<mixed_port>` and the link's own SOCKS5 port both
+exit through this node. Selecting something else later moves only the shared
+inbound; the link's port always keeps its own proxy.
+
 ### Which one do I need?
 
 | Case | Use |

@@ -318,6 +318,8 @@ class Mewnet:
         lib.mewnet_link_create.restype = MewnetLinkResult
         lib.mewnet_link_destroy.argtypes = [ctypes.c_void_p]
         lib.mewnet_link_destroy.restype = None
+        lib.mewnet_link_select.argtypes = [ctypes.c_void_p]
+        lib.mewnet_link_select.restype = ctypes.c_int
         lib.mewnet_link_get_info.argtypes = [ctypes.c_void_p]
         lib.mewnet_link_get_info.restype = MewnetLinkInfo
 
@@ -722,6 +724,9 @@ class Mewnet:
 
     def link_info(self, link):
         return self._link_dict(self.lib.mewnet_link_get_info(link))
+
+    def link_select(self, link):
+        return int(self.lib.mewnet_link_select(link))
 
     def link_list(self):
         links = self.lib.mewnet_load_links(self.instance)

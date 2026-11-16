@@ -88,6 +88,13 @@ int main(void) {
                "load links", "");
         mewnet_unload_links(links);
 
+        expect(!info.selected, "fresh link is not selected", "");
+        expect(mewnet_link_select(vpn) == MEWNET_ERROR_NONE, "link select", "");
+        info = mewnet_link_get_info(vpn);
+        expect(info.ok && info.selected, "selected link reports selected", "");
+        expect(strcmp(mewnet_get_status(instance).selected, info.name) == 0,
+               "link select sets the main proxy", "");
+
         mewnet_link_destroy(vpn);
 
         links = mewnet_load_links(instance);

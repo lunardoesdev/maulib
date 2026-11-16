@@ -65,6 +65,9 @@ info, _ := client.LinkInfo(link.ID)
 ping, _ := client.LinkPing(link.ID, mewnet.DelayOptions{})
 speed, _ := client.LinkSpeed(link.ID, mewnet.SpeedOptions{})
 exitIP, _ := client.LinkExitIP(link.ID, mewnet.ExitIPOptions{})
+
+// Make this link the proxy the shared mixed inbound uses.
+err = client.SelectLink(link.ID)
 ```
 
 Async variants return a task id:

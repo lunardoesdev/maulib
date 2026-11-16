@@ -98,6 +98,15 @@ mewnet_link_result mewnet_link_create(mewnet_instance* instance,
                                     const char* uri,
                                     const mewnet_link_options* options);
 void mewnet_link_destroy(mewnet_link* link);
+
+/*
+ * Make this link the selected proxy of the MEWNET group, so traffic entering
+ * the shared mixed inbound exits through this link. Equivalent to
+ * mewnet_select_proxy(instance, name) with the link's own name, but takes the
+ * handle you already have. The link's own SOCKS5 endpoint is unaffected.
+ */
+mewnet_error_code mewnet_link_select(mewnet_link* link);
+
 mewnet_link_info mewnet_link_get_info(mewnet_link* link);
 
 mewnet_link_list mewnet_load_links(mewnet_instance* instance);

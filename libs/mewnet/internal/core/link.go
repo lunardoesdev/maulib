@@ -459,6 +459,22 @@ func (c *Core) linkByName(name string) (*SharedLink, bool) {
 	return nil, false
 }
 
+// SelectLink makes the link's proxy the selected proxy of the MEWNET group, so
+// traffic entering the shared mixed inbound exits through that link.
+func (c *Core) SelectLink(id uint64) error {
+	c.mu.RLock()
+	if c.closed {
+		c.mu.RUnlock()
+		return ErrClosed
+	}
+	link, ok := c.links[id]
+	c.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("link %d not found", id)
+	}
+	return c.Select("", link.Name)
+}
+
 // LinkPing measures HTTP latency by sending traffic through the link's proxy.
 func (c *Core) LinkPing(id uint64, opts DelayOptions) (*PingResult, error) {
 	return c.linkPingContext(context.Background(), id, opts)

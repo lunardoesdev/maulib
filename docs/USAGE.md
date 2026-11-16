@@ -202,6 +202,18 @@ mewnet_link_destroy(created.link);
 with the printed credentials. Proxy-owning links are protected from
 `mewnet_remove_proxy`; destroy the link instead.
 
+To make the link the **main** proxy — the one the shared inbound uses — hand
+over the handle, no name lookup needed:
+
+```c
+mewnet_link_select(created.link);
+```
+
+It returns `MEWNET_ERROR_NONE` on success and is exactly equivalent to
+`mewnet_select_proxy(m, info.name)`; `mewnet_link_get_info().selected` then
+reports `true`. The link's own SOCKS5 port keeps using that same proxy either
+way.
+
 ### Async
 
 Pass a callback, or `NULL` and poll:

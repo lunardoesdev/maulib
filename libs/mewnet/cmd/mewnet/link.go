@@ -91,6 +91,26 @@ func mewnet_link_destroy(link *C.mewnet_link) {
 	}
 }
 
+//export mewnet_link_select
+func mewnet_link_select(link *C.mewnet_link) (code C.mewnet_error_code) {
+	defer func() {
+		if r := recover(); r != nil {
+			logError(fmt.Errorf("panic: %v", r))
+			code = C.MEWNET_ERROR_FAILED
+		}
+	}()
+	c, id, err := resolveLink(link)
+	if err != nil {
+		logError(err)
+		return cErrorCode(err)
+	}
+	if err := c.SelectLink(id); err != nil {
+		logError(err)
+		return cErrorCode(err)
+	}
+	return C.MEWNET_ERROR_NONE
+}
+
 //export mewnet_link_get_info
 func mewnet_link_get_info(link *C.mewnet_link) (out C.mewnet_link_info) {
 	defer func() {

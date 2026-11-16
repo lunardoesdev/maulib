@@ -178,6 +178,31 @@ class LinkTest(unittest.TestCase):
         self.assertNotEqual(payload["error"], 0, payload)
         self.api.task_destroy(task)
 
+    def test_15_select_link_makes_it_the_main_proxy(self):
+        first = self.api.link_create(DEAD_VLESS, {"name": "first"})
+        self.addCleanup(self.api.link_destroy, first)
+        second = self.api.link_create(DEAD_VLESS, {"name": "second"})
+        self.addCleanup(self.api.link_destroy, second)
+
+        # Fresh links do not steal the selection.
+        self.assertFalse(self.api.link_info(first)["selected"])
+
+        # Selecting by handle is enough: no name lookup at the call site.
+        self.assertEqual(self.api.link_select(first), 0)
+        self.assertTrue(self.api.link_info(first)["selected"])
+        self.assertFalse(self.api.link_info(second)["selected"])
+        self.assertEqual(self.api.status()["selected"], "first")
+
+        self.assertEqual(self.api.link_select(second), 0)
+        self.assertTrue(self.api.link_info(second)["selected"])
+        self.assertFalse(self.api.link_info(first)["selected"])
+        self.assertEqual(self.api.status()["selected"], "second")
+
+        # Selection by name and by handle address the same group entry.
+        self.assertTrue(self.api.select("first")["ok"])
+        self.assertTrue(self.api.link_info(first)["selected"])
+        self.assertFalse(self.api.link_info(second)["selected"])
+
     def test_12_destroy(self):
         link = self.api.link_create(DEAD_VLESS)
         info = self.api.link_info(link)
