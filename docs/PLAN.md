@@ -321,8 +321,11 @@ CGO_ENABLED=1 go build \
 - [x] **3. Hot-swap** — add/remove/select, имена, ошибки, очистка ресурсов.
 - [x] **4. Delay** — sync/async, `test_link`, отмена задач.
 - [x] **5. E2E** — Xray + локальный 204 + негативные сценарии.
-- [ ] **6. TLS/REALITY и stress** — stress (100 циклов) выполнен; TLS-вариант,
-  реальная ссылка и `-race` ещё не проверялись.
+- [x] **6. TLS/REALITY и stress** — stress (100 циклов) выполнен; TLS проверен
+  трафиком (`hysteria2` и `vless` + TLS на живой подписке), реальная подписка и
+  `go test -race ./...` прошли 2026-11-16 (`docs/TEST_REPORT.md` §14).
+  REALITY-узлы в тестовой подписке оказались мёртвыми, поэтому REALITY отдельно
+  не подтверждён.
 - [x] **7. Документация** — Makefile, README, `TEST_REPORT.md`, LICENSE.
 - [x] **8. SharedVPNLink** — объект-ссылка, per-link SOCKS5 с авторизацией,
   ping/speed/exit_ip, конкурентные задачи, hot-swap; e2e на 4 прокси.

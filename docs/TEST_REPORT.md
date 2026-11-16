@@ -3,6 +3,10 @@
 Дата: 2026-11-05
 Версия: 0.2.0 (ABI v2), mihomo v1.19.33
 
+Ниже (§1–§13) — исходный прогон на Fedora 45. Повторная полная проверка на
+другой машине (Ubuntu 24.04, gcc) — в §14 от 2026-11-16, там же актуальные
+цифры и ограничения окружения.
+
 ## Окружение
 
 | Параметр | Значение |
@@ -524,3 +528,109 @@ Failover произошёл через ~15 секунд после первой 
 поэтому даже «зависший» тест узла не задерживает health-check и failover.
 Таймаут теста дополнительно ограничен в Go (`safeURLTest`) на случай, если
 адаптер игнорирует отмену.
+
+## 14. Повторная проверка на Ubuntu 24.04 (2026-11-16)
+
+Полная перепроверка с нуля на другой машине: чистая сборка, весь офлайновый
+набор тестов, e2e с локальным Xray и живой прогон CLI на публичной подписке.
+
+### 14.1. Окружение
+
+| Параметр | Значение |
+|---|---|
+| ОС | Ubuntu 24.04 (LTS) |
+| Ядро | 7.3.4-3-liquorix-amd64 |
+| libc | glibc 2.39 |
+| Компилятор | gcc 13.3.0; clang 23.1.4 (mise) для `make test-c` |
+| Go | 1.27.3 linux/amd64 (mise) |
+| CMake | 4.4.5 (mise) |
+| Python | 3.14.9 |
+| Xray (e2e) | 26.11.9 |
+| Память | 5.9 ГБ + 4.8 ГБ swap |
+
+Сборка:
+
+```bash
+mise install go@1.27.3 clang@23.1.4 cmake@4.4.5   # android-sdk/odin не нужны
+CGO_ENABLED=1 CC=gcc go build -p=2 -trimpath -buildmode=c-shared \
+  -ldflags "-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33" \
+  -o ../../dist/libmewnet.so ./cmd/mewnet
+```
+
+Результат: `dist/libmewnet.so` — 56 MiB, 115 экспортируемых `mewnet_*`.
+
+Приложения собирались системным компилятором:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=gcc -DMEWNET_BUILD_GTK=OFF
+cmake --build build -j2
+```
+
+### 14.2. Итоги
+
+| Набор | Команда | Результат |
+|---|---|---|
+| Go-тесты | `go test ./...` | `ok mewnet`, `ok mewnet/internal/core` |
+| Race | `go test -race -count=1 ./...` | `ok mewnet` 1.27s, `ok .../internal/core` 1.16s, гонок нет |
+| ABI (ctypes) | `tests/python/test_api.py` | 10/10 |
+| SharedVPNLink | `tests/python/test_links.py` | 14/14 |
+| C ABI | `tests/c/test_api.c` | 15 проверок, все PASS |
+| Stress | `tests/python/test_stress.py` | 100 циклов, fd 10→10, goroutines 5→5 |
+| Подписки | `ctest` | 3/3 (base64, sha256, rating) |
+| Agent/CLI офлайн | `tests/e2e/run_gtk_agent.py` | 19/19 |
+| E2E VLESS | `tests/e2e/run.py` | 18/18 |
+| E2E 4 прокси | `tests/e2e/run_links.py` | 39/39 |
+| E2E подписки | `tests/e2e/run_subs.py` | 20/20 |
+| C ping, локальный Xray | `tests/e2e/c_ping_demo.py` | 4 мс |
+
+Stress в цифрах:
+
+```text
+cycles=100 fds=10->10 goroutines=5->5 rss=77136KiB->81540KiB
+```
+
+Рост RSS ~4.3 MiB на 100 hot-swap циклов — как и в §5.
+
+### 14.3. Живой прогон CLI
+
+`mewnet-cli --headless` на публичной подписке
+`Pawdroid/Free-servers/main/sub`, порт 18199, `pool-target 6`:
+
+```text
+== direct IP: 2.26.20.60
+== first signal: READY local=
+== proxied IP: 163.123.193.24
+== http://example.com via proxy: rc=0 code=200
+== https://www.gstatic.com/generate_204 via proxy: rc=0 code=204
+== after switch, proxied IP: 179.254.191.252
+== last STATE: STATE id=6 name=巴西+V2CROSS.COM alive=6 proxies=12 untested=4 ready=1
+== active history: ['德国+阿里云', '巴西+V2CROSS.COM']
+== exit code: 0
+```
+
+Что подтверждено:
+
+- `READY` примерно через 20 с после старта на 12 конфигах из подписки;
+- exit IP меняется (`2.26.20.60` → `163.123.193.24`), то есть трафик реально
+  уходит через узел, а не через DIRECT;
+- `HTTP 200` и `204` через локальный mixed-прокси;
+- `SIGUSR1` переключает узел, exit IP меняется на `179.254.191.252`,
+  трафик продолжает работать;
+- `SIGTERM` завершает процесс с кодом 0, `Mihomo shutting down` без ошибок;
+- discovery добирает пул (`alive` 3→6) и останавливается на `pool-target`.
+
+Состав подписки и что реально прошло трафиком: 12 конфигов —
+`ss` (6), `vless` (3), `trojan` (2), `hysteria2` (1); из них 4 с `security=tls`,
+2 с `security=reality`. Живыми оказались `ss` (4), `vless`+TLS (1) и
+`hysteria2`+TLS (1) — активным после переключения был `hysteria2`/TLS, то есть
+TLS-ветка проверена трафиком. Оба REALITY-узла в этой подписке были мертвы,
+поэтому REALITY отдельно не подтверждён.
+
+### 14.4. Отличия от исходного прогона
+
+- GTK4-панель не проверялась: на машине нет `gtk4.pc` (`-DMEWNET_BUILD_GTK=OFF`),
+  GUI на Odin и mingw-кросс-компиляция тоже не запускались;
+- приложения собраны gcc, а не clang; `-DCMAKE_C_COMPILER=gcc`;
+- из `dist/` удалены устаревшие артефакты старого имени (`libmilib.so`,
+  `libmilib.h`).
