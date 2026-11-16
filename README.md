@@ -302,6 +302,128 @@ mixed port. In your own program the same pieces are `mewnet_subs_*` plus
 `mewnet_agent_start`; see [`docs/USAGE.md`](docs/USAGE.md) and
 [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
 
+## C API: subscriptions, storage and the agent
+
+The storage layer is part of `libmewnet` and declared in
+[`mewnet_subs.h`](libs/mewnet/cmd/mewnet/mewnet_subs.h). SQLite is compiled in
+(FTS5 included), so there is no separate storage library, no schema setup step
+and nothing to install: `mewnet_subs_open` creates the file and migrates it.
+
+### Storage
+
+| Function | What it does |
+|---|---|
+| `mewnet_subs_config_default()` | config with defaults: test URL `generate_204`, 5 s timeout, 10 requests / 240 s, 6 h fetch interval, UA `mewnet-subs/0.2` |
+| `mewnet_subs_open(&config)` | open or create the database; returns `mewnet_subs*` plus a `mewnet_error` |
+| `mewnet_subs_close(db)` | close the handle and its statements |
+| `mewnet_subs_clone(db)` | second connection with the same config, for a fetch or test worker thread |
+| `mewnet_subs_get_stats(db)` | one call returns `subscriptions`, `proxies`, `alive`, `dead`, `tests` |
+
+`mewnet_subs_config` fields: `db_path` (required), `user_agent`, `test_url`,
+`test_expected`, `test_timeout_ms`, `request_limit` (0 disables the limiter),
+`request_window_seconds`, `default_fetch_interval_sec`.
+
+### Groups
+
+| Function | What it does |
+|---|---|
+| `mewnet_subs_load_groups` / `mewnet_subs_unload_groups` | all groups as an array |
+| `mewnet_subs_default_group(&id)` | id of the `All` group, created on demand |
+| `mewnet_subs_add_group(name, priority)` | create a group |
+| `mewnet_subs_remove_group(id)` | delete a group and everything in it |
+| `mewnet_subs_set_group_priority(id, priority)` | change ordering |
+| `mewnet_subs_set_subscription_group(sub_id, group_id)` | move a subscription between groups |
+
+### Subscriptions
+
+| Function | What it does |
+|---|---|
+| `mewnet_subs_add_subscription(url, priority, name)` | add to the default group |
+| `mewnet_subs_add_subscription_in_group(group, url, priority, name)` | add to a specific group |
+| `mewnet_subs_remove_subscription(id)` | delete the URL and its configs |
+| `mewnet_subs_set_priority(id, priority)` / `mewnet_subs_set_enabled(id, bool)` | scheduling hints |
+| `mewnet_subs_load_subscriptions` / `..._in_group` / `..._page(group, limit, offset)` | list; the page variant is what UIs should use; release with `mewnet_subs_unload_subscriptions` |
+| `mewnet_subs_count_subscriptions(group, &n)` | SQL count without loading rows |
+| `mewnet_subs_max_last_fetch(group, &ts)` | newest fetch timestamp |
+| `mewnet_subs_next_subscription_id(group, unfetched_only, &id)` | next candidate to refresh |
+
+A `mewnet_subscription` carries the URL, name, priority, `last_status`,
+`failure_count`, `etag`, `last_modified`, `userinfo` and `last_error` — enough to
+render a status column without touching the database yourself.
+
+### Stored proxies
+
+| Function | What it does |
+|---|---|
+| `mewnet_subs_load_proxies(group, limit, offset)` | full rows including the share link; release with `mewnet_subs_unload_proxies` |
+| `mewnet_subs_load_proxy_summaries(group, limit, offset)` | same without the link — cheap pages for a UI |
+| `mewnet_subs_get_proxy(id, &out)` | one row by id |
+| `mewnet_subs_add_proxy(group, link)` | insert a manual config (survives subscription refresh) |
+| `mewnet_subs_remove_proxy(id)` | delete one config |
+| `mewnet_subs_count_proxies(group, &n)` | SQL count |
+
+### Fetching
+
+| Function | What it does |
+|---|---|
+| `mewnet_subs_fetch(id)` | download one subscription, obeying the shared rate limiter |
+| `mewnet_subs_fetch_now(id)` | same, skipping the limiter (discovery fallback) |
+| `mewnet_subs_fetch_due()` | fetch whichever subscription is due next |
+| `mewnet_subs_cancel_fetch(db)` | abort an in-flight fetch; safe from another thread |
+
+The result reports `http_status`, `added`, `updated`, `removed`, `skipped`.
+`etag`/`last_modified` give conditional requests, and `generation` tracking
+deletes configs that disappeared from the subscription.
+
+### Testing, rating and selection
+
+| Function | What it does |
+|---|---|
+| `mewnet_subs_test_batch(db, instance, group, limit, concurrency)` | test many configs concurrently; returns `tested`, `alive` and the first working one (`first_alive_proxy_id/link/name`) |
+| `mewnet_subs_test_next(db, instance)` | test one candidate, waiting for the rate limiter |
+| `mewnet_subs_test_next_now` / `mewnet_subs_test_candidate_now(scope)` | same without waiting; `scope` is `ANY`, `UNTESTED` or `NOT_ALIVE` |
+| `mewnet_subs_test_proxy(db, instance, id)` | test one known config |
+| `mewnet_subs_record_test(id, alive, delay, error)` | store an external test result and update the rating |
+| `mewnet_subs_record_health(id, ok)` | health signal only: affects selection order, never sets `alive=0` |
+| `mewnet_subs_count_untested(group, &n)` / `mewnet_subs_count_alive(group, &n)` | counters for scheduling |
+| `mewnet_subs_first_alive(group, &out)` / `mewnet_subs_next_alive(group, exclude, &out)` | deterministic picks |
+| `mewnet_subs_random_best_alive(group, exclude, avoid, candidates, &out)` | random pick among the best rated (then fastest) alive nodes |
+
+### Rate limiter
+
+`mewnet_subs_rate_limit_wait(db)` blocks until the shared request budget allows
+another request. `fetch` and `test_next` call it for you; call it yourself only
+when you drive requests directly with `*_now` variants.
+
+### Discovery agent
+
+| Function | What it does |
+|---|---|
+| `mewnet_agent_config_default()` | defaults for the loop below |
+| `mewnet_agent_start(&config, callbacks)` | start the agent thread |
+| `mewnet_agent_stop(agent)` | stop and join |
+| `mewnet_agent_request_switch(agent)` | "change proxy" from a UI |
+| `mewnet_agent_request_subscription(agent, id)` | fetch this subscription now |
+| `mewnet_agent_get_snapshot(agent)` | current node and counters without waiting for a callback |
+
+`mewnet_agent_config`: `db`, `milib` (the core instance), `group_id`,
+`proxy_port`, `batch`, `concurrency`, `fetch_interval_sec`, `slow_interval_sec`,
+`pool_target`, `health_interval_sec`, `health_timeout_ms`, `health_url`,
+`health_expected`, `run_seconds` (0 = run until stopped).
+
+Callbacks are `log(message, user)` and `state(&snapshot, user)`. The snapshot has
+the active `proxy_id`, `name`, `protocol`, `server`, `port`, `delay_ms`, plus
+`subscriptions`, `proxies`, `alive`, `untested` and `ready`.
+
+### SQLite specifics
+
+The file is plain SQLite: WAL journal, `busy_timeout=5000`, 4 MB page cache,
+`temp_store=FILE`, foreign keys with `ON DELETE CASCADE`, FTS5 available for
+your own virtual tables. Tables: `subscription_groups`, `subscriptions`,
+`proxies`, `proxy_sources`, `test_events` — schema and indexes are in
+[`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md#sqlite), usage patterns in
+[`docs/USAGE.md`](docs/USAGE.md#the-database).
+
 ## Async
 
 Every check has an async variant: pass a callback, or `NULL` and poll.
