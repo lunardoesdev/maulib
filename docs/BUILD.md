@@ -69,6 +69,18 @@ make subs
 # build/apps/mewnet-subs/mewnet-subs
 ```
 
+SQLite is compiled into the library from the vendored amalgamation with
+`SQLITE_THREADSAFE=1`, `SQLITE_DQS=0`, `SQLITE_DEFAULT_FOREIGN_KEYS=1`,
+`SQLITE_ENABLE_MATH_FUNCTIONS` and **`SQLITE_ENABLE_FTS5`**; extension loading is
+disabled. The flags live in `libs/mewnet/cmd/mewnet/cgo_flags.go`, so `make build`
+and `make subs` produce the same feature set. Check a build with:
+
+```bash
+python3 -c "import ctypes; l=ctypes.CDLL('./dist/libmewnet.so'); \
+l.sqlite3_compileoption_used.restype=ctypes.c_int; \
+print(l.sqlite3_compileoption_used(b'ENABLE_FTS5'))"
+```
+
 GUI on Odin/raylib:
 
 ```bash

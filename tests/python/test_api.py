@@ -835,6 +835,10 @@ class ApiTest(unittest.TestCase):
     def tearDownClass(cls):
         cls.api.shutdown()
 
+    def test_00_sqlite_fts5(self):
+        used = self.api.lib.sqlite3_compileoption_used(b"ENABLE_FTS5")
+        self.assertEqual(used, 1, "sqlite must be built with FTS5")
+
     def test_01_version(self):
         self.assertEqual(self.api.lib.mewnet_abi_version(), 2)
         self.assertEqual(self.api.lib.mewnet_version(), b"0.2.0")
