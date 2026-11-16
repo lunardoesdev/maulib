@@ -60,6 +60,21 @@ int main(void) {
            added.error.message);
     int64_t link_a = added.id;
 
+    /* Duplicates never create a second row: the caller gets the existing id. */
+    maunet_link_result again = AddMaunetLink(dead_a);
+    expect(again.id == link_a, "same link returns the same id", "");
+    expect(again.error.code == MEWNET_ERROR_NONE, "duplicate is not an error",
+           again.error.message);
+    expect(GetMaunetLinkCount() == 1, "duplicate does not add a row", "");
+
+    const char* same_identity =
+        "vless://11111111-2222-3333-4444-555555555555@127.0.0.1:1"
+        "?encryption=none&security=none&type=tcp&remarked=1#maunet-a-renamed";
+    maunet_link_result renamed = AddMaunetLink(same_identity);
+    expect(renamed.id == link_a, "same identity under another name keeps the id",
+           "");
+    expect(GetMaunetLinkCount() == 1, "identity duplicate does not add a row", "");
+
     expect(GetMaunetLinkCount() == 1, "link count is one", "");
     expect(!GetMaunetLink(999999).id, "missing link returns empty info", "");
 

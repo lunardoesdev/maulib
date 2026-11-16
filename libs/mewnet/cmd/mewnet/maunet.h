@@ -153,8 +153,11 @@ MAUNET_API int GetMaunetProxyPort(void);
 /*
  * Store a share link and return its id. The link is written to the database as
  * a manual config, so it survives restarts and is not removed by a
- * subscription refresh. It is registered in the core lazily, when it becomes
- * the default or is tested.
+ * subscription refresh. If the link is already stored - the same link text, or
+ * the same server and credentials under another name or with different
+ * transport options - the id of the existing row is returned and nothing is
+ * duplicated. The link is registered in the core lazily, when it becomes the
+ * default or is tested.
  */
 MAUNET_API maunet_link_result AddMaunetLink(const char* uri);
 

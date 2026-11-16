@@ -1644,7 +1644,10 @@ static mewnet_error add_proxy_impl(mewnet_subs* db, int64_t group_id, const char
                         " ON CONFLICT DO UPDATE SET"
                         " link=excluded.link,"
                         " identity_hash=excluded.identity_hash,"
-                        " name=CASE WHEN excluded.name<>'' THEN excluded.name ELSE proxies.name END,"
+                        /* A duplicate keeps its stored identity: the caller
+                           only gets the existing id back, the row is not
+                           renamed. */
+                        " name=CASE WHEN proxies.name<>'' THEN proxies.name ELSE excluded.name END,"
                         " protocol=CASE WHEN excluded.protocol<>'' THEN excluded.protocol ELSE proxies.protocol END,"
                         " server=CASE WHEN excluded.server<>'' THEN excluded.server ELSE proxies.server END,"
                         " port=CASE WHEN excluded.port>0 THEN excluded.port ELSE proxies.port END,"
@@ -1668,10 +1671,17 @@ static mewnet_error add_proxy_impl(mewnet_subs* db, int64_t group_id, const char
 
     if (out_id != NULL) {
         *out_id = 0;
-        if (subs_db_prepare(db->db, &stmt,
-                            "SELECT id FROM proxies WHERE group_id=? AND link_hash=?"
-                            " ORDER BY id DESC LIMIT 1",
-                            &err) != 0) {
+        /* The insert is an upsert on (group_id, link_hash) and on
+           (group_id, identity_hash), so a duplicate keeps its original row and
+           the caller must get that row's id. Exact link first, then identity:
+           the same server and credentials under another name or with different
+           transport options is the same stored link. */
+        const char* by_link =
+            "SELECT id FROM proxies WHERE group_id=? AND link_hash=? ORDER BY id ASC LIMIT 1";
+        const char* by_identity =
+            "SELECT id FROM proxies WHERE group_id=? AND identity_hash=? ORDER BY id ASC LIMIT 1";
+
+        if (subs_db_prepare(db->db, &stmt, by_link, &err) != 0) {
             return err;
         }
         sqlite3_bind_int64(stmt, 1, group_id);
@@ -1680,6 +1690,19 @@ static mewnet_error add_proxy_impl(mewnet_subs* db, int64_t group_id, const char
             *out_id = sqlite3_column_int64(stmt, 0);
         }
         sqlite3_finalize(stmt);
+
+        if (*out_id == 0) {
+            if (subs_db_prepare(db->db, &stmt, by_identity, &err) != 0) {
+                return err;
+            }
+            sqlite3_bind_int64(stmt, 1, group_id);
+            subs_db_bind_blob(stmt, 2, identity, (int)sizeof(identity));
+            if (sqlite3_step(stmt) == SQLITE_ROW) {
+                *out_id = sqlite3_column_int64(stmt, 0);
+            }
+            sqlite3_finalize(stmt);
+        }
+
         if (*out_id == 0) {
             return subs_make_error(MEWNET_ERROR_FAILED, "added proxy has no id");
         }

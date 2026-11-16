@@ -779,6 +779,9 @@ from `GetMaunetError()`.
 
 - a link id is the stored row id, so it survives restarts and is the same value
   that `LoadMaunetLinks` returns;
+- adding a link that already exists never creates a second row: the same link
+  text, or the same server and credentials under another name or with different
+  transport options, returns the id of the stored link;
 - `AddMaunetLink` writes a manual config: subscriptions never remove it, and
   `AddMaunetSubscription` never overwrites it;
 - links are registered in the core lazily — `SetMaunetLinkAsDefault` and
