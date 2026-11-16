@@ -31,12 +31,12 @@ deps:
 
 build:
 	mkdir -p dist
-	cd libs/mewnet && CC=$(CGO_CC) $(GO) build -p=2 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o ../../dist/libmewnet.so ./cmd/mewnet
+	cd libs/mewnet && CC=$(CGO_CC) $(GO) build -p=1 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o ../../dist/libmewnet.so ./cmd/mewnet
 	@ls -lh dist/libmewnet.so
 
 build-mingw-core:
 	mkdir -p dist/windows
-	cd libs/mewnet && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=$(MINGW_CC) $(GO) build -p=2 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o ../../dist/windows/mewnet.dll ./cmd/mewnet
+	cd libs/mewnet && GOOS=windows GOARCH=amd64 CGO_ENABLED=1 CC=$(MINGW_CC) $(GO) build -p=1 -trimpath -buildmode=c-shared -ldflags "$(LDFLAGS)" -o ../../dist/windows/mewnet.dll ./cmd/mewnet
 	{ echo 'LIBRARY mewnet.dll'; echo 'EXPORTS'; $(MINGW_OBJDUMP) -p dist/windows/mewnet.dll | grep -oE 'mewnet_[A-Za-z0-9_]+' | sort -u | sed 's/^/  /'; } > dist/windows/mewnet.def
 	$(MINGW_DLLTOOL) -d dist/windows/mewnet.def -l dist/windows/libmewnet.dll.a -D mewnet.dll
 
@@ -47,7 +47,7 @@ subs-mingw: build-mingw-core
 		-DMEWNET_BUILD_TESTS=OFF \
 		-DMEWNET_BUILD_GTK=OFF \
 		-DMEWNET_LIBRARY=$(CURDIR)/dist/windows/libmewnet.dll.a
-	$(MISE) exec -- cmake --build build-mingw -j$(shell nproc)
+	$(MISE) exec -- cmake --build build-mingw -j1
 
 test: test-unit test-links test-c test-subs test-e2e test-e2e-subs test-e2e-links
 
@@ -60,7 +60,7 @@ test-links: build
 
 subs: build
 	$(MISE) exec -- cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang
-	$(MISE) exec -- cmake --build build -j$(shell nproc)
+	$(MISE) exec -- cmake --build build -j1
 
 test-subs: subs
 	$(MISE) exec -- ctest --test-dir build --output-on-failure
