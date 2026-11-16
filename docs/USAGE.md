@@ -403,7 +403,38 @@ mewnet_add_proxy(m, chosen.link, &add);
 concurrently and returns the first working one — that is what the fast bootstrap
 in the clients uses. `mewnet_subs_close(db)` releases the handle.
 
-Full schema, groups and rating rules: [`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md).
+### The database
+
+`db_path` is required and points at a plain SQLite file. The library creates it
+on first open and migrates the schema in place, so there is no separate setup
+step and no `sqlite3` package to install: SQLite is compiled into `libmewnet`.
+
+Every connection opens with `journal_mode=WAL`, `busy_timeout=5000`,
+`cache_size=-4096` (4 MB) and `temp_store=FILE`, so a reader and the fetch
+worker do not block each other.
+
+| Table | Holds |
+|---|---|
+| `subscription_groups` | groups; the default `All` group is created automatically |
+| `subscriptions` | URL, fetch schedule, ETag/Last-Modified, failure count |
+| `proxies` | parsed configs, rating, alive flag, last delay, health signal |
+| `proxy_sources` | which subscription last saw a config (generation cleanup) |
+| `test_events` | every test result with the rating before and after |
+
+The file is ordinary SQLite, so any tool can read it while your app runs:
+
+```bash
+sqlite3 data/subs.db '.tables'
+sqlite3 data/subs.db 'SELECT protocol, COUNT(*), SUM(alive) FROM proxies GROUP BY protocol;'
+sqlite3 data/subs.db 'SELECT name, rating, last_delay_ms FROM proxies ORDER BY rating DESC LIMIT 5;'
+```
+
+Do not write to it from another process while the agent is running — go through
+`mewnet_subs_*`. When a background thread of yours needs its own connection,
+`mewnet_subs_clone(db)` returns one with the same configuration; release both
+with `mewnet_subs_close`.
+
+Full schema and index list: [`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md#sqlite).
 
 ## Discovery agent
 

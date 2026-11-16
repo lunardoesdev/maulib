@@ -285,7 +285,8 @@ measurements. Edge cases, auth rules and hot-swap details:
 ## Subscriptions and the agent
 
 A subscription is a URL that returns share links. `libmewnet` downloads it,
-stores configs in SQLite, tests them under a shared rate limit, rates them
+stores configs in a SQLite file you choose (`--db data/subs.db`, created and
+migrated automatically), tests them under a shared rate limit, rates them
 `+1/-1`, and the agent keeps a pool of working nodes and switches the selected
 proxy when the active one dies.
 

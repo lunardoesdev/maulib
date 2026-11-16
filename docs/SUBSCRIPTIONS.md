@@ -140,25 +140,27 @@ exists.
 
 ```sql
 subscription_groups(
-  id, name, priority, enabled, created_at
+  id, name UNIQUE, priority, enabled, created_at
 )
 
 subscriptions(
-  id, group_id, url, name, priority, enabled,
+  id, group_id, url UNIQUE, name, priority, enabled,
   fetch_interval_sec, next_fetch_at, last_fetch_at, last_status,
   failure_count, etag, last_modified, userinfo, last_error,
   generation, created_at
 )
 
 proxies(
-  id, group_id, link, link_hash, name, protocol, server, port,
-  rating, alive, manual, last_tested_at, last_delay_ms, last_error,
-  last_up_day, last_down_day,
+  id, group_id, link, link_hash, identity_hash, name, protocol,
+  server, port, rating, health_failures, alive, manual,
+  last_tested_at, last_delay_ms, last_error, last_up_day, last_down_day,
   UNIQUE(group_id, link_hash)
 )
+-- plus UNIQUE(group_id, identity_hash): the deduplication key
 
 proxy_sources(
-  proxy_id, subscription_id, last_seen_generation
+  proxy_id, subscription_id, last_seen_generation,
+  PRIMARY KEY(proxy_id, subscription_id)
 )
 
 test_events(
@@ -167,7 +169,16 @@ test_events(
 )
 ```
 
-WAL, `busy_timeout`, `foreign_keys` and `ON DELETE CASCADE` are enabled.
+`link_hash` is the hash of the whole link; `identity_hash` is
+`protocol + host + port + credentials`, so re-rolled names or transport options
+do not create a duplicate. Indexes cover `(group_id, alive)`,
+`(group_id, last_tested_at)`, `(group_id, identity_hash)` and the fetch schedule.
+
+WAL, `busy_timeout=5000`, `foreign_keys` with `ON DELETE CASCADE`, 4 MB page
+cache and `temp_store=FILE` are enabled on every connection.
+
+`proxies.health_failures` is the rolling health signal used for routing: it does
+not change `alive`.
 
 ## Rating
 
