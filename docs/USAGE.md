@@ -403,6 +403,17 @@ mewnet_add_proxy(m, chosen.link, &add);
 concurrently and returns the first working one — that is what the fast bootstrap
 in the clients uses. `mewnet_subs_close(db)` releases the handle.
 
+Groups group subscriptions: each subscription belongs to exactly one group and
+its configs inherit it. `mewnet_subs_default_group` returns the lowest-id group
+(created as `All`), which is where `mewnet_subs_add_subscription` puts things —
+it is a default target, not a live aggregate. Pass **`0` as `group_id`** to read,
+count, test or select across **all** subscriptions:
+
+```c
+mewnet_subs_proxy chosen;
+mewnet_subs_random_best_alive(db, 0 /* all groups */, 0, 0, 5, &chosen);
+```
+
 ### The database
 
 `db_path` is required and points at a plain SQLite file. The library creates it

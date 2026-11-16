@@ -104,14 +104,24 @@ BOM, CRLF, spaces, `+`/`-`, `/`/`_`, `=` and a missing `=` are supported.
 
 ## Subscription groups
 
-Subscriptions are combined into groups. On the first open of the DB a group
-`All` is created, and every new subscription goes into it. That is the single
-large group holding all subscriptions.
+Each subscription belongs to exactly one group, and its configs inherit that
+group (`proxies.group_id`). On the first open a group `All` is created, and
+`mewnet_subs_add_subscription` puts new subscriptions into it. `All` is the
+default destination, not a live aggregate: a subscription moved to the `work`
+group leaves `All` behind.
 
 ```c
 mewnet_subs_group_list groups = mewnet_subs_load_groups(db);
 mewnet_subs_add_subscription_in_group(db, group_id, url, priority, name);
 ```
+
+**`group_id = 0` means "all groups"** for reads and tests: `count_proxies`,
+`count_alive`, `count_untested`, `count_subscriptions`, `max_last_fetch`,
+`load_proxies`, `load_proxy_summaries`, `load_subscriptions`, `first_alive`,
+`next_alive`, `random_best_alive`, `test_batch` and `next_subscription_id`.
+That is how you pick the best node across every subscription you have.
+Writers need a real id: `add_subscription` and
+`add_subscription_in_group(db, 0, ...)` fall back to the default group.
 
 Available for GUI/CLI:
 

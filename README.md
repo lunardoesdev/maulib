@@ -394,6 +394,44 @@ skips it, and `mewnet_subs_fetch_due` picks whichever subscription is due next �
 that is what a scheduler needs. A second thread should get its own connection
 with `mewnet_subs_clone(db)` rather than sharing this handle.
 
+### Groups, and picking a node from all subscriptions
+
+A group is a folder for subscriptions: each subscription belongs to exactly one
+group and its configs inherit that group. `mewnet_subs_default_group` returns the
+id of the **lowest-id group**, created as `All` on a fresh database, and
+`mewnet_subs_add_subscription` puts new subscriptions there. It is a default
+destination, not a live aggregate — a subscription moved to the `work` group is
+no longer in `All`.
+
+To work with everything you have, pass **`group_id = 0`**, which means "no group
+filter", to the read and test functions:
+
+```c
+/* Counts, listing and selection accept 0 = all groups. */
+int64_t alive_all = 0;
+mewnet_subs_count_alive(db, 0, &alive_all);
+
+mewnet_subs_proxy best;
+mewnet_error picked = mewnet_subs_random_best_alive(db, 0 /* all groups */,
+                                                    0 /* exclude */, 0 /* avoid */,
+                                                    5 /* candidates */, &best);
+if (picked.code == MEWNET_ERROR_NONE) {
+    mewnet_add_options add = mewnet_add_options_default();
+    add.select_proxy = true;
+    mewnet_add_proxy(instance, best.link, &add);   /* main proxy for this process */
+}
+```
+
+The same `0` works for `count_proxies`, `count_untested`, `count_subscriptions`,
+`max_last_fetch`, `load_proxies`, `load_proxy_summaries`, `load_subscriptions`,
+`first_alive`, `next_alive`, `test_batch` and `next_subscription_id`. Writers are
+the exception: `add_subscription` and `add_subscription_in_group(db, 0, ...)` put
+the subscription into the default group, and adding a config always needs a real
+group id.
+
+If you keep everything in the default group — the common case — the id is
+interchangeable with `0`, and both forms are fine.
+
 ### Testing stored configs and routing traffic through the winner
 
 Testing is done by the core (`mewnet_instance`), results and ratings are written
@@ -425,20 +463,18 @@ int main(void) {
         return 1;
     }
 
-    int64_t group = 0;
-    mewnet_subs_default_group(opened.db, &group);
-
-    /* Up to 200 configs, 32 checks in parallel. Cancelled checks report
+    /* Up to 200 configs, 32 checks in parallel. 0 means "every group", so the
+       batch covers all subscriptions. Cancelled checks report
        MEWNET_ERROR_CANCELLED and must not be read as failures. */
     mewnet_subs_batch_test_result batch =
-        mewnet_subs_test_batch(opened.db, init.instance, group, 200, 32);
+        mewnet_subs_test_batch(opened.db, init.instance, 0 /* all groups */, 200, 32);
     printf("tested=%zu alive=%zu first=%s\n",
            batch.tested, batch.alive, batch.first_alive_name);
 
     /* Highest rating, then lowest delay; the pick is random inside that
        window of 5 candidates so repeated calls do not stick to one node. */
     mewnet_subs_proxy chosen;
-    mewnet_error pick = mewnet_subs_random_best_alive(opened.db, group,
+    mewnet_error pick = mewnet_subs_random_best_alive(opened.db, 0 /* all groups */,
                                                       0 /* exclude id */,
                                                       0 /* avoid id */,
                                                       5 /* candidates */,

@@ -1301,16 +1301,17 @@ mewnet_error mewnet_subs_next_subscription_id(mewnet_subs* db, int64_t group_id,
     mewnet_error err;
     subs_clear_error(&err);
     const char* sql_unfetched =
-        "SELECT id FROM subscriptions WHERE group_id=? AND enabled=1"
+        "SELECT id FROM subscriptions WHERE (?=0 OR group_id=?) AND enabled=1"
         " AND last_fetch_at IS NULL"
         " ORDER BY failure_count ASC, id ASC LIMIT 1";
     const char* sql_next =
-        "SELECT id FROM subscriptions WHERE group_id=? AND enabled=1"
+        "SELECT id FROM subscriptions WHERE (?=0 OR group_id=?) AND enabled=1"
         " ORDER BY COALESCE(last_fetch_at,0) ASC, failure_count ASC, id ASC LIMIT 1";
     if (subs_db_prepare(db->db, &stmt, unfetched_only ? sql_unfetched : sql_next, &err) != 0) {
         return err;
     }
     sqlite3_bind_int64(stmt, 1, group_id);
+    sqlite3_bind_int64(stmt, 2, group_id);
     int rc = sqlite3_step(stmt);
     if (rc == SQLITE_ROW) {
         *out_id = sqlite3_column_int64(stmt, 0);

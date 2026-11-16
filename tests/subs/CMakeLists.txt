@@ -21,3 +21,14 @@ add_test(NAME rating COMMAND test_rating)
 
 set_tests_properties(base64 sha256 rating PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=${MEWNET_ROOT}/dist")
+
+add_executable(test_groups test_groups.c)
+target_include_directories(test_groups PRIVATE "${MEWNET_PACKAGE_DIR}")
+target_link_libraries(test_groups PRIVATE "${MEWNET_LIBRARY}")
+if(NOT WIN32)
+    target_link_libraries(test_groups PRIVATE pthread m)
+endif()
+add_test(NAME groups COMMAND test_groups)
+
+set_tests_properties(groups PROPERTIES
+    ENVIRONMENT "LD_LIBRARY_PATH=${MEWNET_ROOT}/dist")

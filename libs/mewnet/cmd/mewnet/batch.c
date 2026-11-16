@@ -26,13 +26,6 @@ mewnet_subs_batch_test_result mewnet_subs_test_batch(mewnet_subs* db, mewnet_ins
                                        "db and milib instance are required");
         return result;
     }
-    if (group_id == 0) {
-        mewnet_error group_err = mewnet_subs_default_group(db, &group_id);
-        if (group_err.code != MEWNET_ERROR_NONE) {
-            result.error = group_err;
-            return result;
-        }
-    }
     if (limit == 0) {
         limit = 70;
     }
@@ -54,7 +47,7 @@ mewnet_subs_batch_test_result mewnet_subs_test_batch(mewnet_subs* db, mewnet_ins
                         " SELECT p.id AS id, p.link AS link, p.rating AS rating,"
                         " p.last_tested_at AS last_tested_at"
                         " FROM proxies p"
-                        " WHERE p.group_id=? AND (p.last_tested_at IS NULL OR p.alive=0)"
+                        " WHERE (?=0 OR p.group_id=?) AND (p.last_tested_at IS NULL OR p.alive=0)"
                         " GROUP BY p.id"
                         ") q"
                         " ORDER BY CASE WHEN q.last_tested_at IS NULL THEN 0 ELSE 1 END,"
@@ -67,7 +60,8 @@ mewnet_subs_batch_test_result mewnet_subs_test_batch(mewnet_subs* db, mewnet_ins
         return result;
     }
     sqlite3_bind_int64(stmt, 1, group_id);
-    sqlite3_bind_int64(stmt, 2, (int64_t)limit);
+    sqlite3_bind_int64(stmt, 2, group_id);
+    sqlite3_bind_int64(stmt, 3, (int64_t)limit);
 
     size_t capacity = 0;
     size_t count = 0;
