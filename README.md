@@ -7,21 +7,48 @@ own process**. No daemon, no control port, no JSON: a C ABI with plain
 functions, value structs and opaque handles that you can call from C, Python,
 Odin or anything else with FFI.
 
-The library bundles mihomo v1.19.33 plus everything needed around it:
+You get a local proxy on `127.0.0.1`, per-proxy measurements, subscription
+storage in SQLite and a discovery agent that keeps a working node selected — all
+inside your binary.
 
-- a local mixed SOCKS5/HTTP inbound on `127.0.0.1`;
-- proxies added straight from share links (VLESS, VMess, Trojan, Shadowsocks,
-  Hysteria2, ...);
-- **SharedVPNLink** — one proxy exposed as its own authenticated SOCKS5 endpoint
-  with `ping`, `speed` and `exit_ip` methods;
-- latency, throughput and exit-IP checks that measure real traffic through the
-  tunnel, not ICMP;
-- async tasks with a callback or with polling;
-- subscription storage in SQLite, a `+1/-1` rating with daily caps, and a
-  discovery agent that keeps one working proxy selected and fails over
-  automatically;
-- four clients built on the same library: a CLI/TUI, `mewnet-watch`, a GTK4
-  control panel, and an Odin/raylib GUI.
+## How it fits together
+
+There is **one core instance per process**. Inside that core:
+
+- a **mixed SOCKS5/HTTP inbound** listens on `127.0.0.1:<port>`;
+- a selector group called **`MEWNET`** holds every proxy you add;
+- the rules end with `MATCH,MEWNET`, so all traffic that enters the inbound goes
+  to whichever proxy is currently selected.
+
+```text
+your client ──► 127.0.0.1:18085 (mixed inbound)
+                        │
+                 [ MEWNET selector ]
+                        │
+        ┌───────────────┼───────────────┐
+   proxy A (selected)  proxy B        proxy C
+```
+
+On top of that there are **two independent ways to route traffic**. This is the
+part that usually confuses people, so here is the whole model in one table:
+
+| | Shared inbound | Per-link endpoint (SharedVPNLink) |
+|---|---|---|
+| What listens | one mixed port for the whole process | one SOCKS5 port per link |
+| Which proxy is used | the currently **selected** proxy in `MEWNET` | **exactly the proxy of that link**, always |
+| Credentials | none | user `mewnet` + generated password (overridable) |
+| How you change the exit | `mewnet_select_proxy` / `add.select_proxy` | create another link, or destroy this one |
+| Lifetime | until `mewnet_close` | until `mewnet_link_destroy` |
+| Created by | `mewnet_init` | `mewnet_link_create` |
+| Typical use | one proxy for the whole app | give one thread/process/subscriber its own exit |
+
+Two things that follow from this:
+
+1. **A link is not a second tunnel.** `mewnet_link_create` adds its proxy to the
+   same `MEWNET` group, so the proxy can be used both by the shared inbound (if
+   you select it) and by its own SOCKS5 port.
+2. **Per-link traffic ignores the selection.** If the app switches to proxy C,
+   a client connected to link B's SOCKS5 port keeps exiting through B.
 
 ## Quick start
 
@@ -35,7 +62,8 @@ make subs            # dist/libmewnet.so + CLI / watch / subs
   https://example.com/subscription.txt
 ```
 
-The CLI prints when it has a working node:
+The CLI is the core plus subscriptions plus the agent, so it prints the mixed
+port as soon as a node works:
 
 ```text
 DB data/mewnet-cli.db
@@ -44,31 +72,236 @@ ACTIVE id=6 name=some-node delay=525
 READY local=http://127.0.0.1:18085
 ```
 
-From there any HTTP client can use it:
-
 ```bash
 curl -x http://127.0.0.1:18085 https://example.com
 curl -x http://127.0.0.1:18085 https://api.ipify.org    # exit IP
 ```
 
-## Choose your entry point
+## Route traffic through a proxy
 
-| You want | Start here |
+### Path 1 — shared inbound: traffic goes through the selected proxy
+
+```c
+mewnet_add_options add = mewnet_add_options_default();
+add.select_proxy = true;                 /* make it the selected proxy */
+mewnet_add_proxy(m, "vless://...", &add);
+
+int port = mewnet_get_status(m).mixed_port;
+printf("use http://127.0.0.1:%d\n", port);
+```
+
+Now everything pointed at `http://127.0.0.1:<port>` (or `socks5h://`, the same
+port speaks SOCKS5) exits through that proxy:
+
+```bash
+curl -x http://127.0.0.1:$PORT https://example.com
+```
+
+Switching later is a hot swap: `mewnet_select_proxy(m, "other-node")`. New
+connections use the new node; connections that are already open stay on the old
+one until they close.
+
+### Path 2 — per-link endpoint: traffic goes through one specific link
+
+Use this when a consumer needs its own exit and its own credentials, without
+caring what the rest of the process has selected.
+
+```c
+mewnet_link_options opts = mewnet_link_options_default();
+opts.local_proxy = true;                 /* default: open a SOCKS5 port */
+
+mewnet_link_result created = mewnet_link_create(m, "vless://...", &opts);
+if (created.link == NULL) { /* created.error.message */ }
+
+mewnet_link_info info = mewnet_link_get_info(created.link);
+printf("%s %s %s\n", info.socks_addr, info.socks_username, info.socks_password);
+```
+
+That is all — traffic sent to `info.socks_addr` with those credentials always
+exits through this link:
+
+```bash
+curl --socks5-hostname 127.0.0.1:<link_port> \
+     --proxy-user mewnet:<generated-password> https://example.com
+```
+
+`mewnet_link_ping`, `mewnet_link_speed` and `mewnet_link_exit_ip` also measure
+this link specifically, regardless of which proxy is selected.
+
+### Which one do I need?
+
+| Case | Use |
 |---|---|
-| A proxy on localhost from a subscription | `mewnet-cli` (above) or the GTK panel |
-| Proxy control from C | [`mewnet.h`](libs/mewnet/cmd/mewnet/mewnet.h) and [`docs/USAGE.md`](docs/USAGE.md) |
-| Proxy control from Python | [`docs/USAGE.md`](docs/USAGE.md#python) |
-| Proxy control from Go | [`libs/mewnet/README.md`](libs/mewnet/README.md) |
-| Subscription storage and rating | [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md) |
-| One proxy with its own SOCKS5 auth | [`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.md) |
-| How the agent picks and switches nodes | [`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md) |
-| Build and cross-compile details | [`docs/BUILD.md`](docs/BUILD.md) |
+| Whole application goes through one proxy | shared inbound + selection |
+| Different subscribers/threads must exit through different proxies | one link per subscriber |
+| You want to hand a ready-made SOCKS5 endpoint to another program | per-link endpoint |
+| You only need to test links and pick the fastest | links + `mewnet_link_ping_many`, no routing needed |
+| Subscription-driven, failover must happen automatically | the agent with the shared inbound |
+
+## C: complete example, shared inbound
+
+```c
+#include <stdio.h>
+#include "mewnet.h"
+
+int main(void) {
+    mewnet_config config = mewnet_config_default();
+    config.mixed_port = 0;           /* 0: pick a free port, -1: no inbound */
+    config.log_level = "warning";
+
+    mewnet_init_result init = mewnet_init(&config);
+    if (init.instance == NULL) {
+        fprintf(stderr, "init failed (%d): %s\n", init.error.code, init.error.message);
+        return 1;
+    }
+    mewnet_instance *m = init.instance;
+
+    mewnet_add_options add = mewnet_add_options_default();
+    add.select_proxy = true;
+    if (mewnet_add_proxy(m, "vless://...", &add) != MEWNET_ERROR_NONE) {
+        fprintf(stderr, "add failed, see the log callback\n");
+        mewnet_close(m);
+        return 1;
+    }
+
+    mewnet_delay_options delay = mewnet_delay_options_default();
+    delay.url = "https://www.gstatic.com/generate_204";
+    delay.expected = "204";
+    delay.timeout_ms = 5000;
+
+    mewnet_status_info status = mewnet_get_status(m);
+    printf("proxy: http://127.0.0.1:%d (selected: %s)\n",
+           status.mixed_port, status.selected);
+
+    mewnet_delay_result d = mewnet_test_delay(m, status.selected, &delay);
+    if (d.ok) {
+        printf("delay: %u ms\n", d.delay_ms);
+    }
+
+    /* ... the app runs, traffic goes through http://127.0.0.1:<mixed_port> ... */
+
+    mewnet_close(m);
+    return 0;
+}
+```
+
+Compile:
+
+```bash
+cc app.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet -Wl,-rpath,"$PWD/dist" -o app
+./app
+```
+
+Buffer sizes, list ownership and the rest of the API are in
+[`docs/USAGE.md`](docs/USAGE.md) and the header comments.
+
+## C: complete example, one link with its own SOCKS5
+
+```c
+#include <stdio.h>
+#include "mewnet.h"
+
+int main(void) {
+    mewnet_config config = mewnet_config_default();
+    config.mixed_port = -1;          /* no shared inbound at all */
+
+    mewnet_init_result init = mewnet_init(&config);
+    if (init.instance == NULL) {
+        fprintf(stderr, "init: %s\n", init.error.message);
+        return 1;
+    }
+    mewnet_instance *m = init.instance;
+
+    mewnet_link_options opts = mewnet_link_options_default();
+    opts.local_proxy = true;
+
+    mewnet_link_result created = mewnet_link_create(m, "vless://...", &opts);
+    if (created.link == NULL) {
+        fprintf(stderr, "link: %s\n", created.error.message);
+        mewnet_close(m);
+        return 1;
+    }
+
+    mewnet_link_info info = mewnet_link_get_info(created.link);
+    printf("curl --socks5-hostname %s --proxy-user %s:%s https://example.com\n",
+           info.socks_addr, info.socks_username, info.socks_password);
+
+    mewnet_delay_options delay = mewnet_delay_options_default();
+    mewnet_ping_result ping = mewnet_link_ping(created.link, &delay);
+    printf("delay: %u ms\n", ping.delay_ms);
+
+    mewnet_link_destroy(created.link);
+    mewnet_close(m);
+    return 0;
+}
+```
+
+`local_proxy = false` skips the SOCKS5 listener when you only need the
+measurements. Edge cases, auth rules and hot-swap details:
+[`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.md).
+
+## Subscriptions and the agent
+
+A subscription is a URL that returns share links. `libmewnet` downloads it,
+stores configs in SQLite, tests them under a shared rate limit, rates them
+`+1/-1`, and the agent keeps a pool of working nodes and switches the selected
+proxy when the active one dies.
+
+```bash
+make subs
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db sub add URL 0 name
+./build/apps/mewnet-subs/mewnet-subs --db data/subs.db run --limit 10 --window 240
+```
+
+The shortest path from a subscription to working traffic is the CLI from Quick
+start: it opens the database, starts the core, starts the agent and prints the
+mixed port. In your own program the same pieces are `mewnet_subs_*` plus
+`mewnet_agent_start`; see [`docs/USAGE.md`](docs/USAGE.md) and
+[`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
+
+## Async
+
+Every check has an async variant: pass a callback, or `NULL` and poll.
+
+```c
+static void on_ping(const mewnet_task_result *result, void *user) {
+    if (result->state == MEWNET_TASK_DONE && result->error == MEWNET_ERROR_NONE) {
+        printf("delay: %u\n", result->ping.delay_ms);
+    }
+}
+
+mewnet_task *task = mewnet_link_ping_async(link, &delay, on_ping, NULL);
+/* ... */
+mewnet_task_destroy(task);
+```
+
+Callbacks run on an arbitrary OS thread; do not call `mewnet_close`,
+`mewnet_link_destroy` or `mewnet_task_destroy` from inside one. For a
+main-thread loop, create the task with `NULL` and use `mewnet_task_poll`.
+
+## Clients
+
+**`mewnet-cli`** — the agent with a TUI (`s` switches proxy, `q` quits) or
+`--headless` for scripts.
+
+**`mewnet-watch`** — discovery only: checks up to 70 proxies at once until one
+works, prints `PROXY http://127.0.0.1:<port>`.
+
+**`mewnet-gtk`** — GTK4 panel: add and remove subscriptions, change the active
+node, watch the discovery log.
+
+**`mewnet-gui`** — a small Odin/raylib GUI for browsing groups and paging
+through proxies (`make gui`).
+
+All four use the same library and the same agent, so the behaviour matches.
+Policy (health checks every 6 s, failover after 2 failures out of 3, pool of 12,
+random switch among the best): [`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md).
 
 ## Build
 
 Requirements: Linux x86_64 with glibc, Go 1.26+ with CGO, a C compiler.
 Consumers of the finished library need none of that — only `libmewnet.so` and
-the two headers.
+the headers.
 
 ```bash
 make deps            # install go/clang/cmake/odin via mise
@@ -85,171 +318,18 @@ make subs-mingw          # one DLL for all clients
 
 Full toolchain notes, flags and caveats: [`docs/BUILD.md`](docs/BUILD.md).
 
-## Use it from C
+## Choose your entry point
 
-Errors are returned, not thrown: `mewnet_init` and `mewnet_link_create` hand
-back a full `mewnet_error`, other operations return an error code that also
-reaches the log callback.
-
-```c
-#include "mewnet.h"
-
-mewnet_config config = mewnet_config_default();
-config.mixed_port = 0;          /* 0: free port (or YAML), -1: no inbound */
-config.log_level = "warning";
-
-mewnet_init_result init = mewnet_init(&config);
-if (init.instance == NULL) {
-    fprintf(stderr, "init: %s\n", init.error.message);
-    return 1;
-}
-mewnet_instance *m = init.instance;
-
-mewnet_add_options add = mewnet_add_options_default();
-add.select_proxy = true;
-if (mewnet_add_proxy(m, "vless://...", &add) != MEWNET_ERROR_NONE) {
-    /* details go to the log callback */
-}
-
-mewnet_delay_options delay = mewnet_delay_options_default();
-delay.url = "https://www.gstatic.com/generate_204";
-delay.expected = "204";
-delay.timeout_ms = 5000;
-
-mewnet_delay_result test = mewnet_test_delay(m, "some-node", &delay);
-if (test.ok) {
-    printf("delay: %u ms\n", test.delay_ms);
-}
-
-mewnet_close(m);
-```
-
-Everything else — listing proxies, list ownership, subscriptions, streaming
-HTTP, logging, async patterns — is in [`docs/USAGE.md`](docs/USAGE.md) and the
-header comments.
-
-## SharedVPNLink
-
-`mewnet_link_create` turns one share link into an object you can hand to any
-SOCKS5 client:
-
-1. the proxy is added to the `MEWNET` group and can be hot-swapped later with
-   `mewnet_select_proxy`;
-2. a SOCKS5 listener opens on `127.0.0.1:<random>` **with authentication**.
-
-The login defaults to `mewnet`; the password is generated (18 random bytes)
-unless you pass `password`. The upstream credential (VLESS UUID, Trojan
-password) can be overridden with `proxy_password`.
-
-```c
-mewnet_link_options options = mewnet_link_options_default();
-options.local_proxy = true;
-
-mewnet_link_result created = mewnet_link_create(m, "vless://...", &options);
-mewnet_link *link = created.link;
-
-mewnet_link_info info = mewnet_link_get_info(link);
-printf("socks5 %s user=%s pass=%s\n",
-       info.socks_addr, info.socks_username, info.socks_password);
-
-mewnet_ping_result ping = mewnet_link_ping(link, &delay);
-mewnet_speed_result speed = mewnet_link_speed(link, &speed_options);
-mewnet_exit_ip_result ip = mewnet_link_exit_ip(link, &exit_options);
-
-mewnet_link_destroy(link);
-```
-
-```bash
-curl --socks5-hostname 127.0.0.1:<link_port> \
-     --proxy-user mewnet:<generated-password> https://example.com
-```
-
-Per-link endpoints proxy TCP only. Details and edge cases:
-[`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.md).
-
-## Async tasks
-
-Every check has an async variant. Pass a callback, or pass `NULL` and poll.
-
-```c
-static void on_ping(const mewnet_task_result *result, void *user) {
-    if (result->state == MEWNET_TASK_DONE && result->error == MEWNET_ERROR_NONE) {
-        printf("delay: %u\n", result->ping.delay_ms);
-    }
-}
-
-mewnet_task *task = mewnet_link_ping_async(link, &delay, on_ping, NULL);
-/* ... */
-mewnet_task_destroy(task);
-```
-
-Callbacks run on an arbitrary OS thread. Do not call `mewnet_close`,
-`mewnet_link_destroy` or `mewnet_task_destroy` from inside one. For a
-main-thread loop, use `mewnet_task_poll` instead:
-
-```c
-mewnet_task *task = mewnet_link_ping_async(link, &delay, NULL, NULL);
-mewnet_task_result result;
-
-while ((result = mewnet_task_poll(task)).state == MEWNET_TASK_RUNNING) {
-    /* main loop */
-}
-mewnet_task_destroy(task);
-```
-
-`mewnet_link_destroy` and `mewnet_close` cancel and wait for their tasks.
-
-## Subscriptions
-
-Subscription storage, SQLite and the discovery agent live in the same
-`libmewnet`; there is no separate `libmewnet_subs`. `mewnet-subs` is the
-command-line front end:
-
-```bash
-make subs
-./build/apps/mewnet-subs/mewnet-subs --db data/subs.db sub add URL 0 name
-./build/apps/mewnet-subs/mewnet-subs --db data/subs.db run --limit 10 --window 240
-```
-
-It streams plain and base64 subscriptions, stores configs in SQLite, groups them
-(there is always an `All` group), deduplicates within a group by the full link
-without `#name`, tests configs under a shared rate limit (10 requests per
-240 seconds by default) and keeps a `+1/-1` rating with daily caps.
-
-Details: [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
-
-## Clients
-
-**`mewnet-watch`** — discovery from the terminal. Checks up to 70 proxies at
-once until one works, then prints the local proxy address:
-
-```bash
-./build/apps/mewnet-watch/mewnet-watch --db data/watch.db --proxy-port 18085 \
-  --batch 70 --concurrency 70 \
-  https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
-```
-
-**`mewnet-cli`** — the same agent with a TUI (`s` switches proxy, `q` quits) or
-`--headless` for scripts:
-
-```bash
-./build/apps/mewnet-cli/mewnet-cli --db data/mewnet-cli.db --proxy-port 18085
-```
-
-**`mewnet-gtk`** — GTK4 control panel: add and remove subscriptions, change the
-active node, watch the discovery log.
-
-```bash
-make gtk
-./build/apps/mewnet-gtk/mewnet-gtk --db data/mewnet-gtk.db --proxy-port 18085
-```
-
-**`mewnet-gui`** — a small Odin/raylib GUI for browsing subscription groups and
-paging through proxies (`make gui`).
-
-The reliability policy (health checks every 6 s, failover after 2 failures out
-of 3, pool of 12, random switch among the best) is described in
-[`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md).
+| You want | Start here |
+|---|---|
+| A proxy on localhost from a subscription | `mewnet-cli` (Quick start) or the GTK panel |
+| Proxy control from C | [`mewnet.h`](libs/mewnet/cmd/mewnet/mewnet.h), [`docs/USAGE.md`](docs/USAGE.md) |
+| Proxy control from Python | [`docs/USAGE.md`](docs/USAGE.md#python) |
+| Proxy control from Go | [`libs/mewnet/README.md`](libs/mewnet/README.md) |
+| Subscription storage and rating | [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md) |
+| One proxy with its own SOCKS5 auth | [`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.md) |
+| How the agent picks and switches nodes | [`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md) |
+| Build and cross-compile details | [`docs/BUILD.md`](docs/BUILD.md) |
 
 ## Repository layout
 
@@ -271,6 +351,8 @@ docs/                     usage, building, testing, design notes
 - no TUN/system VPN in this build (needs the `with_gvisor` tag);
 - "ping" is HTTP latency via `URLTest`, not ICMP;
 - per-link SOCKS5 proxies TCP only;
+- switching the selected proxy does not migrate connections that are already
+  open — they finish on the old node;
 - `mewnet_close` and `mewnet_link_destroy` must not be called from an async
   callback;
 - a panic in a background mihomo goroutine kills the process — run untrusted

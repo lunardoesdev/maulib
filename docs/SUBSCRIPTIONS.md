@@ -253,7 +253,7 @@ Behavior:
 - adds subscriptions to `All`;
 - while there is no alive node, tests untested configs in batches of 70
   concurrently;
-- on finding an alive node, adds it to `MILIB`, selects it and prints
+- on finding an alive node, adds it to `MEWNET`, selects it and prints
   `PROXY http://127.0.0.1:<port>` + `READY`;
 - after that discovery goes through the standard rate limiter;
 - updates at most one subscription per hour; if there are no untested nodes and

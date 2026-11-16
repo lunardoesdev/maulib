@@ -27,6 +27,23 @@ Link with `-Ldist -lmewnet` and run with `LD_LIBRARY_PATH=dist` (or an rpath).
 | **subscription** | a URL plus its stored configs (SQLite), grouped and rated |
 | **agent** | the background loop that fetches subscriptions, tests configs, selects a node and fails over |
 
+### Two ways to route traffic
+
+Everything runs in one core, but traffic can leave it through two different
+doors:
+
+| | Shared inbound | Per-link endpoint |
+|---|---|---|
+| Listens on | one mixed SOCKS5/HTTP port | one SOCKS5 port per link |
+| Proxy used | the selected proxy in `MEWNET` | always the link's own proxy |
+| Credentials | none | `mewnet` + generated password |
+| Changed by | `mewnet_select_proxy`, `add.select_proxy` | creating/destroying links |
+
+`mewnet_link_create` does not start a second core: it adds the proxy to the same
+`MEWNET` group and opens one more listener for it. So the same proxy can serve
+the shared inbound (once selected) and its own dedicated port at the same time,
+and switching the selection never affects clients connected to a link port.
+
 ## C
 
 ### Start and stop
