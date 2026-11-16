@@ -2,72 +2,100 @@
 
 # mewnet
 
-C-ABI (`c-shared`) обёртка над ядром [mihomo](https://github.com/MetaCubeX/mihomo)
-**v1.19.33** для Linux x86_64. Позволяет управлять прокси из C/Python/любого
-языка с FFI без запуска отдельного процесса.
+Run the [mihomo](https://github.com/MetaCubeX/mihomo) proxy core **inside your
+own process**. No daemon, no control port, no JSON: a C ABI with plain
+functions, value structs and opaque handles that you can call from C, Python,
+Odin or anything else with FFI.
 
-Возможности:
+The library bundles mihomo v1.19.33 plus everything needed around it:
 
-- `init/close` ядра mihomo в процессе;
-- локальный mixed SOCKS/HTTP inbound на `127.0.0.1`;
-- добавление прокси по VLESS/VMess/Trojan/... ссылке или base64-подписке;
-- **`SharedVPNLink`** — объект-ссылка с методами `ping`, `speed`, `exit_ip`;
-- авторизация per-link SOCKS5 генерируемыми ключами (пароль можно задать вручную);
-- конкурентное тестирование нескольких прокси;
-- hot-swap активного прокси без разрыва текущих соединений;
-- async-задачи с callback или poll;
-- C и Python тесты, e2e с локальным Xray.
+- a local mixed SOCKS5/HTTP inbound on `127.0.0.1`;
+- proxies added straight from share links (VLESS, VMess, Trojan, Shadowsocks,
+  Hysteria2, ...);
+- **SharedVPNLink** — one proxy exposed as its own authenticated SOCKS5 endpoint
+  with `ping`, `speed` and `exit_ip` methods;
+- latency, throughput and exit-IP checks that measure real traffic through the
+  tunnel, not ICMP;
+- async tasks with a callback or with polling;
+- subscription storage in SQLite, a `+1/-1` rating with daily caps, and a
+  discovery agent that keeps one working proxy selected and fails over
+  automatically;
+- four clients built on the same library: a CLI/TUI, `mewnet-watch`, a GTK4
+  control panel, and an Odin/raylib GUI.
 
-Публичный ABI — **v2**, raylib-style: простые функции, value-структуры,
-`load/unload` для списков, opaque handles и никаких JSON-строк.
-Заголовки: [`libs/mewnet/cmd/mewnet/mewnet.h`](libs/mewnet/cmd/mewnet/mewnet.h) и
-[`libs/mewnet/cmd/mewnet/mewnet_types.h`](libs/mewnet/cmd/mewnet/mewnet_types.h).
+## Quick start
 
-## Структура
+Build the core and the clients, give the CLI a subscription, and use the proxy:
+
+```bash
+make deps            # pinned toolchain via mise (go, clang, cmake, odin, android-sdk)
+make subs            # dist/libmewnet.so + CLI / watch / subs
+./build/apps/mewnet-cli/mewnet-cli --headless \
+  --db data/mewnet-cli.db --proxy-port 18085 \
+  https://example.com/subscription.txt
+```
+
+The CLI prints when it has a working node:
 
 ```text
-libs/mewnet/       Go-ядро, c-shared libmewnet
-libs/mewnet/cmd/mewnet/  один Go-пакет: Go-ядро + весь C-код подписок + SQLite
-apps/gui/          Odin + raylib GUI
-apps/mewnet-gtk/   C + GTK4 control panel
-apps/mewnet-cli/   C CLI/TUI agent
-third_party/       SQLite amalgamation
-tests/             C, Python, e2e
-docs/
+DB data/mewnet-cli.db
+PROXY http://127.0.0.1:18085
+ACTIVE id=6 name=some-node delay=525
+READY local=http://127.0.0.1:18085
 ```
 
-## Сборка
-
-Нужен Go 1.26+ и CGO (gcc/clang). Подробности — в
-[`docs/BUILD.md`](docs/BUILD.md).
-
-Toolchain ставится через mise:
+From there any HTTP client can use it:
 
 ```bash
-make deps           # go, odin, android-sdk, clang, cmake
-make build          # dist/libmewnet.so
-make subs           # одна dist/libmewnet.so + CLI/GUI/тесты
-make gui            # build/mewnet-gui
+curl -x http://127.0.0.1:18085 https://example.com
+curl -x http://127.0.0.1:18085 https://api.ipify.org    # exit IP
 ```
 
-Кросс-компиляция под Windows/mingw:
+## Choose your entry point
+
+| You want | Start here |
+|---|---|
+| A proxy on localhost from a subscription | `mewnet-cli` (above) or the GTK panel |
+| Proxy control from C | [`mewnet.h`](libs/mewnet/cmd/mewnet/mewnet.h) and [`docs/USAGE.md`](docs/USAGE.md) |
+| Proxy control from Python | [`docs/USAGE.md`](docs/USAGE.md#python) |
+| Proxy control from Go | [`libs/mewnet/README.md`](libs/mewnet/README.md) |
+| Subscription storage and rating | [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md) |
+| One proxy with its own SOCKS5 auth | [`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.md) |
+| How the agent picks and switches nodes | [`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md) |
+| Build and cross-compile details | [`docs/BUILD.md`](docs/BUILD.md) |
+
+## Build
+
+Requirements: Linux x86_64 with glibc, Go 1.26+ with CGO, a C compiler.
+Consumers of the finished library need none of that — only `libmewnet.so` and
+the two headers.
 
 ```bash
-make build-mingw-core   # dist/windows/mewnet.dll + import lib
-make subs-mingw         # одна dist/windows/mewnet.dll
+make deps            # install go/clang/cmake/odin via mise
+make build           # dist/libmewnet.so + dist/libmewnet.h
+make subs            # the same library + C clients and tests
 ```
 
-## Быстрый старт (C)
+Cross-compile the core for Windows:
 
-Ошибки — в возвращаемом значении. Для `init` и `link_create` есть полная
-структура `mewnet_error` с сообщением; для остальных операций — код ошибки и
-log callback.
+```bash
+make build-mingw-core    # dist/windows/mewnet.dll + import library
+make subs-mingw          # one DLL for all clients
+```
+
+Full toolchain notes, flags and caveats: [`docs/BUILD.md`](docs/BUILD.md).
+
+## Use it from C
+
+Errors are returned, not thrown: `mewnet_init` and `mewnet_link_create` hand
+back a full `mewnet_error`, other operations return an error code that also
+reaches the log callback.
 
 ```c
 #include "mewnet.h"
 
 mewnet_config config = mewnet_config_default();
-config.mixed_port = 0;          /* 0: из YAML или свободный, -1: выключить */
+config.mixed_port = 0;          /* 0: free port (or YAML), -1: no inbound */
 config.log_level = "warning";
 
 mewnet_init_result init = mewnet_init(&config);
@@ -77,113 +105,71 @@ if (init.instance == NULL) {
 }
 mewnet_instance *m = init.instance;
 
-mewnet_link_options options = mewnet_link_options_default();
-options.password = "manual-pass"; /* можно не задавать */
-options.local_proxy = true;
-
-mewnet_link_result created = mewnet_link_create(m, "vless://...", &options);
-if (created.link == NULL) {
-    fprintf(stderr, "link: %s\n", created.error.message);
-    mewnet_close(m);
-    return 1;
-}
-mewnet_link *link = created.link;
-
-mewnet_link_info info = mewnet_link_get_info(link);
-if (info.ok) {
-    printf("socks5 %s user=%s pass=%s\n",
-           info.socks_addr, info.socks_username, info.socks_password);
+mewnet_add_options add = mewnet_add_options_default();
+add.select_proxy = true;
+if (mewnet_add_proxy(m, "vless://...", &add) != MEWNET_ERROR_NONE) {
+    /* details go to the log callback */
 }
 
 mewnet_delay_options delay = mewnet_delay_options_default();
 delay.url = "https://www.gstatic.com/generate_204";
-delay.timeout_ms = 5000;
 delay.expected = "204";
+delay.timeout_ms = 5000;
 
-mewnet_ping_result ping = mewnet_link_ping(link, &delay);
-if (ping.ok) {
-    printf("delay: %u ms\n", ping.delay_ms);
+mewnet_delay_result test = mewnet_test_delay(m, "some-node", &delay);
+if (test.ok) {
+    printf("delay: %u ms\n", test.delay_ms);
 }
 
-mewnet_speed_options speed_options = mewnet_speed_options_default();
-speed_options.bytes = 5 * 1024 * 1024;
-mewnet_speed_result speed = mewnet_link_speed(link, &speed_options);
-if (speed.ok) {
-    printf("speed: %.2f Mbit/s\n", speed.mbps);
-}
-
-mewnet_exit_ip_options exit_options = mewnet_exit_ip_options_default();
-mewnet_exit_ip_result exit_ip = mewnet_link_exit_ip(link, &exit_options);
-if (exit_ip.ok && exit_ip.valid) {
-    printf("exit ip: %s\n", exit_ip.ip);
-}
-
-mewnet_link_destroy(link);
 mewnet_close(m);
 ```
 
+Everything else — listing proxies, list ownership, subscriptions, streaming
+HTTP, logging, async patterns — is in [`docs/USAGE.md`](docs/USAGE.md) and the
+header comments.
+
 ## SharedVPNLink
 
-`mewnet_link_create` разбирает ссылку и создаёт:
+`mewnet_link_create` turns one share link into an object you can hand to any
+SOCKS5 client:
 
-1. прокси в группе `MEWNET` (hot-swap через `mewnet_select_proxy`);
-2. локальный SOCKS5 endpoint на `127.0.0.1:<random>` **с авторизацией**.
+1. the proxy is added to the `MEWNET` group and can be hot-swapped later with
+   `mewnet_select_proxy`;
+2. a SOCKS5 listener opens on `127.0.0.1:<random>` **with authentication**.
 
-Логин по умолчанию `mewnet`, пароль генерируется (18 случайных байт).
-Пароль можно задать вручную через `password`, а upstream-credential
-(VLESS UUID / Trojan password) — через `proxy_password`.
-`mewnet_link_options_default()` включает локальный SOCKS5 и не выбирает ссылку
-активной.
+The login defaults to `mewnet`; the password is generated (18 random bytes)
+unless you pass `password`. The upstream credential (VLESS UUID, Trojan
+password) can be overridden with `proxy_password`.
 
-Методы:
+```c
+mewnet_link_options options = mewnet_link_options_default();
+options.local_proxy = true;
 
-| Метод | Что делает |
-|---|---|
-| `mewnet_link_get_info` | id, имя, тип, сервер, порт, SOCKS-адрес и авторизация |
-| `mewnet_link_ping` | HTTP-задержка **трафиком через прокси** (`URLTest`) |
-| `mewnet_link_speed` | скачивает N байт через прокси, отдаёт `bytes`/`mbps` |
-| `mewnet_link_exit_ip` | GET к echo-сервису через прокси, отдаёт exit IP |
-| `mewnet_link_*_async` | то же в фоновой задаче + callback или poll |
-| `mewnet_link_ping_many` | пингует несколько ссылок одновременно |
-| `mewnet_load_links` | все живые ссылки в массив `mewnet_link_info` |
-| `mewnet_link_destroy` | удаляет прокси, закрывает SOCKS и освобождает handle |
+mewnet_link_result created = mewnet_link_create(m, "vless://...", &options);
+mewnet_link *link = created.link;
 
-Трафик через конкретную ссылку можно гнать двумя способами:
+mewnet_link_info info = mewnet_link_get_info(link);
+printf("socks5 %s user=%s pass=%s\n",
+       info.socks_addr, info.socks_username, info.socks_password);
+
+mewnet_ping_result ping = mewnet_link_ping(link, &delay);
+mewnet_speed_result speed = mewnet_link_speed(link, &speed_options);
+mewnet_exit_ip_result ip = mewnet_link_exit_ip(link, &exit_options);
+
+mewnet_link_destroy(link);
+```
 
 ```bash
-# 1. через mixed inbound + выбранную ссылку
-curl -x http://127.0.0.1:<mixed_port> https://example.com
-
-# 2. через per-link SOCKS5 с авторизацией
 curl --socks5-hostname 127.0.0.1:<link_port> \
      --proxy-user mewnet:<generated-password> https://example.com
 ```
 
-## Списки и владение
+Per-link endpoints proxy TCP only. Details and edge cases:
+[`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.md).
 
-Списки выделяются библиотекой и освобождаются одной функцией:
+## Async tasks
 
-```c
-mewnet_proxy_list proxies = mewnet_load_proxies(m);
-for (size_t i = 0; i < proxies.count; i++) {
-    printf("%s (%s)\n", proxies.items[i].name, proxies.items[i].proxy_type);
-}
-printf("selected: %s\n", proxies.selected);
-mewnet_unload_proxies(proxies);
-```
-
-То же для `mewnet_load_links` / `mewnet_unload_links` и
-`mewnet_link_ping_many` / `mewnet_unload_ping_many`.
-
-| Что | Кто освобождает |
-|---|---|
-| `mewnet_instance*` | `mewnet_close()` |
-| `mewnet_link*` | `mewnet_link_destroy()` |
-| `mewnet_task*` | `mewnet_task_destroy()` |
-| `mewnet_load_*()` | `mewnet_unload_*()` |
-| `mewnet_version()` | не нужно, статическая строка |
-
-## Async
+Every check has an async variant. Pass a callback, or pass `NULL` and poll.
 
 ```c
 static void on_ping(const mewnet_task_result *result, void *user) {
@@ -197,9 +183,9 @@ mewnet_task *task = mewnet_link_ping_async(link, &delay, on_ping, NULL);
 mewnet_task_destroy(task);
 ```
 
-Callback вызывается из Go-горутины, то есть на произвольном OS-потоке. Внутри
-callback нельзя вызывать `mewnet_close`, `mewnet_link_destroy` и
-`mewnet_task_destroy`. Если нужен main-thread loop, используйте poll:
+Callbacks run on an arbitrary OS thread. Do not call `mewnet_close`,
+`mewnet_link_destroy` or `mewnet_task_destroy` from inside one. For a
+main-thread loop, use `mewnet_task_poll` instead:
 
 ```c
 mewnet_task *task = mewnet_link_ping_async(link, &delay, NULL, NULL);
@@ -211,21 +197,13 @@ while ((result = mewnet_task_poll(task)).state == MEWNET_TASK_RUNNING) {
 mewnet_task_destroy(task);
 ```
 
-`mewnet_link_destroy` и `mewnet_close` отменяют и ждут связанные задачи.
+`mewnet_link_destroy` and `mewnet_close` cancel and wait for their tasks.
 
-## Подписки
+## Subscriptions
 
-Подписки, SQLite и discovery-agent входят в ту же `libmewnet` — отдельной
-`libmewnet_subs` больше нет. CLI `mewnet-subs`:
-
-- потоково качает plain/base64 подписки;
-- пишет конфиги в SQLite;
-- группирует подписки; по умолчанию есть группа `All` со всеми подписками;
-- дедуплицирует конфиги в пределах группы по полной ссылке без `#name`;
-  смена пароля/UUID создаёт новую запись, дедупликации по host нет;
-- хранит метаданные подписок; поле `priority` оставлено только для совместимости и не влияет на выбор;
-- тестирует конфиги и ведёт рейтинг `+1/-1` с суточными ограничениями;
-- соблюдает общий лимит запросов (по умолчанию 10 за 240 секунд).
+Subscription storage, SQLite and the discovery agent live in the same
+`libmewnet`; there is no separate `libmewnet_subs`. `mewnet-subs` is the
+command-line front end:
 
 ```bash
 make subs
@@ -233,142 +211,89 @@ make subs
 ./build/apps/mewnet-subs/mewnet-subs --db data/subs.db run --limit 10 --window 240
 ```
 
-Подробности — в [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
+It streams plain and base64 subscriptions, stores configs in SQLite, groups them
+(there is always an `All` group), deduplicates within a group by the full link
+without `#name`, tests configs under a shared rate limit (10 requests per
+240 seconds by default) and keeps a `+1/-1` rating with daily caps.
 
-## CLI discovery: `mewnet-watch`
+Details: [`docs/SUBSCRIPTIONS.md`](docs/SUBSCRIPTIONS.md).
+
+## Clients
+
+**`mewnet-watch`** — discovery from the terminal. Checks up to 70 proxies at
+once until one works, then prints the local proxy address:
 
 ```bash
-make subs
-./build/apps/mewnet-watch/mewnet-watch \
-  --db data/watch.db --proxy-port 18085 \
+./build/apps/mewnet-watch/mewnet-watch --db data/watch.db --proxy-port 18085 \
   --batch 70 --concurrency 70 \
   https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
 ```
 
-Пока рабочий узел не найден, утилита проверяет по 70 прокси одновременно.
-Когда найден — печатает `PROXY http://127.0.0.1:<port>` и `READY`, добавляет
-узел в `MILIB` и продолжает discovery с обычным rate limit. Подписки
-обновляются не чаще одной в час, либо сразу, если проверять больше нечего и
-рабочих узлов нет.
-
-Подробности — в [`apps/mewnet-watch/README.md`](apps/mewnet-watch/README.md).
-
-## GTK4 control panel: `mewnet-gtk`
+**`mewnet-cli`** — the same agent with a TUI (`s` switches proxy, `q` quits) or
+`--headless` for scripts:
 
 ```bash
-make gtk
-# или
-./build/apps/mewnet-gtk/mewnet-gtk --db data/mewnet-gtk.db --proxy-port 18085 \
-  https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
-```
-
-Окно умеет добавлять/удалять подписки, менять активный прокси, показывает
-текущий узел и журнал discovery. Локальный прокси слушает
-`http://127.0.0.1:<port>`; адрес виден в верхней панели.
-
-Надёжность: активный узел health-check'ается каждые 6 с, после двух отказов из последних трёх
-происходит автоматический failover; живые узлы не перепроверяются; пул
-держится до 4 прокси; кнопка смены выбирает случайный из лучших; при полном
-отказе discovery снова становится агрессивным и тянет следующую подписку. При закрытии окна прокси
-останавливается.
-
-Подробности — в [`apps/mewnet-gtk/README.md`](apps/mewnet-gtk/README.md) и
-[`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md).
-
-CLI/TUI использует тот же библиотечный agent:
-
-```bash
-make cli
-# s — сменить прокси, q — выход
 ./build/apps/mewnet-cli/mewnet-cli --db data/mewnet-cli.db --proxy-port 18085
 ```
 
-Автотест отказоустойчивости (офлайн, локальные прокси):
+**`mewnet-gtk`** — GTK4 control panel: add and remove subscriptions, change the
+active node, watch the discovery log.
 
 ```bash
-make test-agent
+make gtk
+./build/apps/mewnet-gtk/mewnet-gtk --db data/mewnet-gtk.db --proxy-port 18085
 ```
 
-## GUI на Odin
+**`mewnet-gui`** — a small Odin/raylib GUI for browsing subscription groups and
+paging through proxies (`make gui`).
 
-Есть простая raylib-программа:
+The reliability policy (health checks every 6 s, failover after 2 failures out
+of 3, pool of 12, random switch among the best) is described in
+[`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md).
+
+## Repository layout
+
+```text
+libs/mewnet/              Go core, built as the c-shared libmewnet
+libs/mewnet/cmd/mewnet/   one Go package: Go core + all C subscription code + SQLite
+apps/gui/                 Odin + raylib GUI
+apps/mewnet-gtk/          C + GTK4 control panel
+apps/mewnet-cli/          C CLI/TUI agent
+apps/mewnet-watch/        C discovery tool
+tests/                    C, Python and e2e tests
+docs/                     usage, building, testing, design notes
+```
+
+## Limitations
+
+- one mihomo instance per process (the core keeps global state);
+- `dlclose` on the `.so` is not allowed: the Go runtime cannot be unloaded;
+- no TUN/system VPN in this build (needs the `with_gvisor` tag);
+- "ping" is HTTP latency via `URLTest`, not ICMP;
+- per-link SOCKS5 proxies TCP only;
+- `mewnet_close` and `mewnet_link_destroy` must not be called from an async
+  callback;
+- a panic in a background mihomo goroutine kills the process — run untrusted
+  configs in a separate process;
+- the build depends on glibc; for old distributions build in an older image.
+
+## Tests
 
 ```bash
-make gui
-./build/mewnet-gui --db data/subs.db
+make test-unit       # ABI and logic through ctypes
+make test-links      # SharedVPNLink without network (auth, errors, destroy)
+make test-c          # C test with #include "mewnet.h"
+make test-stress     # 100 add/remove cycles, FD/goroutine/RSS
+make test-agent      # offline failover/recovery test for the agent
+make xray            # download Xray for e2e (into /tmp, not committed)
+make test-e2e        # local Xray + VLESS + mixed inbound
+make test-e2e-links  # 4 proxies, hot-swap, concurrent pings
+make test-e2e-subs   # local Xray + HTTP subscription + SQLite/rating
+make test-c-ping-local
 ```
 
-Она умеет работать с группами подписок, добавлять/удалять подписки, листать
-прокси группы страницами, смотреть полную ссылку выбранного конфига,
-добавлять ручные прокси и удалять их. GUI не загружает все прокси группы:
-только страницу и одну выбранную запись.
+Results, numbers and known gaps: [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md).
 
-Подробности — в [`gui/README.md`](gui/README.md).
+## License
 
-## Go API
-
-Ядро можно импортировать из Go без cgo:
-
-```go
-import "mewnet"
-
-client, _ := mewnet.Start(mewnet.Config{MixedPort: -1})
-defer client.Close()
-```
-
-Подробности — в [`libs/mewnet/README.md`](libs/mewnet/README.md).
-
-## C API
-
-Полное описание — в [`libs/mewnet/cmd/mewnet/mewnet.h`](libs/mewnet/cmd/mewnet/mewnet.h).
-
-Основные группы:
-
-- lifecycle: `mewnet_init`, `mewnet_close`, `mewnet_get_status`;
-- proxy management: `mewnet_load_proxies`, `mewnet_add_proxy`,
-  `mewnet_remove_proxy`, `mewnet_select_proxy`;
-- latency: `mewnet_test_delay`, `mewnet_test_link`;
-- `SharedVPNLink`: `mewnet_link_create`, `mewnet_link_destroy`,
-  `mewnet_link_get_info`, `mewnet_load_links`, `mewnet_link_ping`,
-  `mewnet_link_speed`, `mewnet_link_exit_ip`;
-- async: `mewnet_*_async`, `mewnet_task_poll`, `mewnet_task_cancel`,
-  `mewnet_task_destroy`;
-- logging: `mewnet_set_log_level`, `mewnet_set_log_callback`.
-
-## Тесты
-
-```bash
-make test-unit       # ABI/логика через ctypes
-make test-links      # SharedVPNLink без сети (auth, ошибки, destroy)
-make test-c          # C-тест с #include "mewnet.h"
-make test-stress     # 100 циклов add/remove, утечки FD/goroutine/RSS
-make xray            # скачать Xray для e2e (в /tmp, не коммитится)
-make test-e2e        # локальный Xray + VLESS + mixed inbound
-make test-e2e-links  # 4 прокси, hot-swap, конкурентные пинги
-make test-agent  # офлайн failover/recovery тест agent
-make test-c-ping-local                          # ping из C, локальный Xray
-make test-c-ping MEWNET_TEST_VLESS='vless://...' # ping из C, реальная ссылка
-```
-
-`test-e2e-links` — главный сценарий: Python создаёт 4 прокси через FFI,
-гоняет трафик через mihomo, меняет активный прокси на горячую и одновременно
-пингует три других. Результаты — в [`docs/TEST_REPORT.md`](docs/TEST_REPORT.md).
-
-`make test-subs` запускает C-тесты подписок (base64, SHA-256, рейтинг),
-`make test-e2e-subs` — локальный Xray + HTTP-подписка + SQLite/rating.
-
-## Ограничения
-
-- один экземпляр mihomo на процесс (глобальное состояние ядра);
-- `dlclose` для `.so` запрещён — Go runtime не выгружается;
-- TUN/системный VPN не входит в эту сборку (нужен тег `with_gvisor`);
-- «пинг» — это HTTP-задержка (`URLTest`), не ICMP;
-- per-link SOCKS5 поддерживает TCP (UDP не проксируется);
-- `mewnet_close`/`mewnet_link_destroy` нельзя вызывать из async callback;
-- panic в фоновой горутине mihomo роняет процесс: для недоверенных конфигов
-  используйте отдельный процесс;
-- сборка glibc-зависимая: для старых дистрибутивов собирайте в старом base image.
-
-## Лицензия
-
-GPL-3.0, как у mihomo. Распространение `.so` требует соблюдения GPL.
+GPL-3.0, same as mihomo. Distributing the `.so` means complying with the GPL.

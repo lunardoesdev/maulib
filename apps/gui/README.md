@@ -1,67 +1,67 @@
 # mewnet GUI (Odin + raylib)
 
-Простая GUI-программа для управления подписками и прокси из SQLite.
+A simple GUI program for managing subscriptions and proxies from SQLite.
 
-## Сборка и запуск
+## Build and run
 
 ```bash
 make gui
 ./build/mewnet-gui --db data/subs.db
 ```
 
-Для проверки без ручного скриншота:
+For a check without a manual screenshot:
 
 ```bash
 ./build/mewnet-gui --db data/subs.db --screenshot /tmp/mewnet-gui.png
 ```
 
-GUI использует:
+The GUI uses:
 
-- `libmewnet` для всех операций с SQLite;
-- `vendor:raylib` из Odin;
-- только страницы прокси, а не всю подписку;
-- DejaVu Sans + Symbola fallback для Unicode/эмодзи.
-  CJK-иероглифы, которых нет в этих шрифтах, могут отображаться как `?`.
+- `libmewnet` for all SQLite operations;
+- `vendor:raylib` from Odin;
+- only proxy pages, not the whole subscription;
+- DejaVu Sans + Symbola fallback for Unicode/emoji.
+  CJK characters that these fonts lack may render as `?`.
 
-## Что можно делать
+## What you can do
 
-- смотреть группы подписок; по умолчанию одна группа `All`;
-- добавлять подписку в выбранную группу: URL + priority;
-- удалять выбранную подписку;
-- листать прокси группы страницами по 16;
-- видеть имя, протокол, адрес, рейтинг, alive/dead, задержку, manual-флаг;
-- выбрать прокси и посмотреть полную share-ссылку;
-- добавить ручной прокси в выбранную группу;
-- удалить выбранный прокси.
+- view subscription groups; one group `All` by default;
+- add a subscription to the selected group: URL + priority;
+- delete the selected subscription;
+- page through the group's proxies 16 at a time;
+- see name, protocol, address, rating, alive/dead, latency, manual flag;
+- select a proxy and view its full share link;
+- add a manual proxy to the selected group;
+- delete the selected proxy.
 
-## Память
+## Memory
 
-GUI **не загружает**:
+The GUI **does not load**:
 
-- тело подписки;
-- все прокси подписки;
-- все прокси группы.
+- the subscription body;
+- all proxies of a subscription;
+- all proxies of a group.
 
-Он держит в памяти:
+It keeps in memory:
 
-- список групп и подписок выбранной группы (обычно небольшие);
-- одну страницу `mewnet_subs_proxy_summary` без полной ссылки;
-- одну выбранную полную запись `mewnet_subs_proxy`.
+- the list of groups and of subscriptions in the selected group (usually small);
+- one page of `mewnet_subs_proxy_summary` without the full link;
+- one selected full `mewnet_subs_proxy` record.
 
-Поэтому для подписки на 10 000 конфигов используется примерно тот же объём,
-что и для 20.
+So a subscription with 10 000 configs uses roughly the same amount of memory as
+one with 20.
 
-## Библиотечные API для GUI
+## Library API for the GUI
 
-Добавлены в `libmewnet`:
+Added to `libmewnet`:
 
 - `mewnet_subs_load_groups` / `mewnet_subs_add_subscription_in_group`;
 - `mewnet_subs_load_proxy_summaries` / `mewnet_subs_unload_proxy_summaries`
-  — страница без поля `link`;
-- `mewnet_subs_get_proxy` — одна полная запись по id;
-- `mewnet_subs_add_proxy` — ручной прокси в подписку (`manual = 1`);
+  — a page without the `link` field;
+- `mewnet_subs_get_proxy` — one full record by id;
+- `mewnet_subs_add_proxy` — a manual proxy into a subscription (`manual = 1`);
 - `mewnet_subs_remove_proxy`;
 - `mewnet_subs_count_proxies`.
 
-Ручные прокси не удаляются при следующем fetch, если их нет в подписке:
-generation-cleanup удаляет только `manual = 0`.
+Manual proxies are not removed on the next fetch if they are absent from the
+subscription: generation-cleanup deletes only `manual = 0`.

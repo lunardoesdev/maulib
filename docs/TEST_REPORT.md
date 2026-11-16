@@ -1,26 +1,26 @@
-# mewnet — отчёт о тестировании
+# mewnet — test report
 
-Дата: 2026-11-05
-Версия: 0.2.0 (ABI v2), mihomo v1.19.33
+Date: 2026-11-05
+Version: 0.2.0 (ABI v2), mihomo v1.19.33
 
-Ниже (§1–§13) — исходный прогон на Fedora 45. Повторная полная проверка на
-другой машине (Ubuntu 24.04, gcc) — в §14 от 2026-11-16, там же актуальные
-цифры и ограничения окружения.
+Below (§1–§13) is the original run on Fedora 45. The full re-verification on
+another machine (Ubuntu 24.04, gcc) is in §14 dated 2026-11-16, which also
+holds the current numbers and environment limitations.
 
-## Окружение
+## Environment
 
-| Параметр | Значение |
+| Parameter | Value |
 |---|---|
-| ОС | Fedora Linux 45 (Workstation) |
-| Ядро | 7.2.11-300.fc45.x86_64 |
+| OS | Fedora Linux 45 (Workstation) |
+| Kernel | 7.2.11-300.fc45.x86_64 |
 | libc | glibc 2.44 |
-| Компилятор | clang 23.1.4 (mise), gcc 16.2.1 |
+| Compiler | clang 23.1.4 (mise), gcc 16.2.1 |
 | Go | 1.27.3 linux/amd64 (mise) |
 | CMake | 4.4.5 (mise) |
 | Python | 3.15.0 |
 | Xray (e2e) | 26.10.31 |
 
-Сборка:
+Build:
 
 ```bash
 export PATH="$HOME/.local/go/bin:$PATH"
@@ -29,61 +29,61 @@ export GOCACHE="$HOME/.cache/mewnet/gocache"
 make build
 ```
 
-Результат: `dist/libmewnet.so` — 55 MiB.
+Result: `dist/libmewnet.so` — 55 MiB.
 
-## 1. Go-тесты задач
+## 1. Go task tests
 
-Команда: `go test ./internal/core`
+Command: `go test ./internal/core`
 
-Проверено:
+Verified:
 
-- `cancelLinks` отменяет задачу и ждёт завершения callback;
-- `cancelLinks` не трогает задачи других ссылок;
-- `FreeTask` не возвращается, пока callback ещё выполняется.
+- `cancelLinks` cancels the task and waits for the callback to finish;
+- `cancelLinks` does not touch tasks of other links;
+- `FreeTask` does not return while the callback is still running.
 
 ```
 ok  	mewnet/internal/core
 ```
 
-## 2. Базовые ABI/unit-тесты (Python ctypes)
+## 2. Basic ABI/unit tests (Python ctypes)
 
-Команда: `python3 tests/python/test_api.py`
+Command: `python3 tests/python/test_api.py`
 
 ```
 Ran 10 tests
 OK
 ```
 
-Покрыто: версия/ABI, init/status, невалидные ссылки, add/load/remove,
-защита встроенных имён, уникализация имён, select, ошибка delay для мёртвого
-прокси, повторный init после shutdown, отказ второго экземпляра.
+Covered: version/ABI, init/status, invalid links, add/load/remove,
+built-in name protection, name uniquification, select, delay error for a dead
+proxy, repeated init after shutdown, refusal of a second instance.
 
-## 3. SharedVPNLink без сети
+## 3. SharedVPNLink without network
 
-Команда: `python3 tests/python/test_links.py`
+Command: `python3 tests/python/test_links.py`
 
 ```
 Ran 14 tests
 OK
 ```
 
-Покрыто:
+Covered:
 
-- создание `SharedVPNLink` и `mewnet_link_get_info`;
-- генерация логина/пароля per-link SOCKS5;
-- ручной пароль (`password`) и upstream-пароль (`proxy_password`);
-- SOCKS5-авторизация: неверный пароль отклоняется, верный принимается;
-- `local_proxy = false` отключает локальный SOCKS;
-- ping/speed/exit_ip для мёртвого прокси возвращают ошибку без падения;
-- `mewnet_link_ping_many` для трёх мёртвых ссылок: три изолированных результата;
-- async ping/speed/exit_ip с C-callback;
-- poll async-задачи и `mewnet_task_destroy`;
-- `mewnet_remove_proxy` не даёт удалить прокси, принадлежащий ссылке;
-- `mewnet_link_destroy`: ссылка исчезает из реестра, SOCKS-порт закрывается.
+- creating a `SharedVPNLink` and `mewnet_link_get_info`;
+- generation of the per-link SOCKS5 login/password;
+- manual password (`password`) and upstream password (`proxy_password`);
+- SOCKS5 auth: a wrong password is rejected, the correct one is accepted;
+- `local_proxy = false` disables the local SOCKS;
+- ping/speed/exit_ip for a dead proxy return an error without a crash;
+- `mewnet_link_ping_many` for three dead links: three isolated results;
+- async ping/speed/exit_ip with a C callback;
+- polling an async task and `mewnet_task_destroy`;
+- `mewnet_remove_proxy` refuses to delete a proxy owned by a link;
+- `mewnet_link_destroy`: the link disappears from the registry, the SOCKS port closes.
 
 ## 4. C ABI
 
-Команда: `make test-c`
+Command: `make test-c`
 
 ```
 PASS  abi version
@@ -105,63 +105,63 @@ PASS  load links after destroy
 all C tests passed
 ```
 
-Тест собран с `#include "mewnet.h"` и линкуется с `libmewnet.so`.
+The test is built with `#include "mewnet.h"` and links against `libmewnet.so`.
 
-Проверка ping из C через локальный Xray:
+Ping check from C through a local Xray:
 
 ```
 $ make test-c-ping-local
 2
 ```
 
-`2` — задержка в миллисекундах из `mewnet_ping_result.delay_ms`.
+`2` is the delay in milliseconds from `mewnet_ping_result.delay_ms`.
 
-## 5. Stress: 100 циклов add/remove
+## 5. Stress: 100 add/remove cycles
 
-Команда: `python3 tests/python/test_stress.py`
+Command: `python3 tests/python/test_stress.py`
 
 ```
 cycles=100 fds=11->11 goroutines=5->5 rss=60760KiB->65172KiB
 OK
 ```
 
-Утечек FD и goroutine нет; рост RSS ~4.3 MiB на 100 hot-swap циклов.
+No FD or goroutine leaks; RSS grows by ~4.3 MiB per 100 hot-swap cycles.
 
-## 6. E2E: один VLESS + mixed inbound
+## 6. E2E: single VLESS + mixed inbound
 
-Команда: `python3 tests/e2e/run.py` → **18 passed, 0 failed**.
+Command: `python3 tests/e2e/run.py` → **18 passed, 0 failed**.
 
-Подтверждено:
+Confirmed:
 
-- delay через VLESS > 0 (локальный `204` и gstatic);
-- `curl -x http://127.0.0.1:<mixed>` реально идёт через Xray (access-лог растёт);
-- после `remove` трафик возвращается на `DIRECT`, Xray больше не используется;
-- при остановленном Xray delay и трафик дают ошибку без падения;
-- async callback, `test_link` без добавления, log callback.
+- delay through VLESS > 0 (local `204` and gstatic);
+- `curl -x http://127.0.0.1:<mixed>` really goes through Xray (the access log grows);
+- after `remove` traffic returns to `DIRECT` and Xray is no longer used;
+- with Xray stopped, delay and traffic return an error without a crash;
+- async callback, `test_link` without adding, log callback.
 
-## 7. E2E: 4 прокси, hot-swap и конкурентные задачи
+## 7. E2E: 4 proxies, hot-swap and concurrent tasks
 
-Команда: `python3 tests/e2e/run_links.py` → **39 passed, 0 failed**.
+Command: `python3 tests/e2e/run_links.py` → **39 passed, 0 failed**.
 
-Сценарий:
+Scenario:
 
-1. Python создаёт 4 `SharedVPNLink` через FFI; каждая ссылка указывает на
-   отдельный локальный Xray с собственным access-логом.
-2. Для каждой ссылки проверены `ping`, `speed` (1 MiB) и `exit_ip`.
-3. Per-link SOCKS5: неверный пароль отклоняется, верный — маршрутизирует
-   запрос через свой Xray.
-4. Hot-swap: выбран прокси №1, запущена медленная загрузка, затем активный
-   прокси переключён на №2. Загрузка завершилась полностью, её трафик остался
-   в логе Xray №1; новый запрос ушёл в Xray №2.
-5. Параллельность: пока медленная загрузка идёт через прокси №1,
-   `mewnet_link_ping_many` пингует три других. Все три `ok`, загрузка в этот
-   момент ещё выполняется и затем завершается полностью.
-6. Async `mewnet_link_ping_many_async` с C-callback возвращает `ok` для всех трёх;
-   тот же сценарий через `mewnet_task_poll` также возвращает `ok`.
-7. `mewnet_link_destroy` для одной ссылки: она исчезает из реестра, её SOCKS-порт
-   закрыт, запущенная async-задача отменена, остальные ссылки продолжают работать.
+1. Python creates 4 `SharedVPNLink` instances over FFI; each link points to
+   a separate local Xray with its own access log.
+2. For each link `ping`, `speed` (1 MiB) and `exit_ip` were verified.
+3. Per-link SOCKS5: a wrong password is rejected, the correct one routes
+   the request through its own Xray.
+4. Hot-swap: proxy #1 is selected, a slow download is started, then the active
+   proxy is switched to #2. The download completed in full and its traffic stayed
+   in the access log of Xray #1; the new request went to Xray #2.
+5. Concurrency: while the slow download runs through proxy #1,
+   `mewnet_link_ping_many` pings three others. All three are `ok`, and at that
+   moment the download is still running and afterwards completes in full.
+6. Async `mewnet_link_ping_many_async` with a C callback returns `ok` for all three;
+   the same scenario through `mewnet_task_poll` also returns `ok`.
+7. `mewnet_link_destroy` for one link: it disappears from the registry, its SOCKS port
+   is closed, the running async task is cancelled, and the remaining links keep working.
 
-Фрагмент вывода:
+Output excerpt:
 
 ```
 PASS  xray-1: ping through proxy
@@ -179,22 +179,22 @@ PASS  surviving links still work
 39 passed, 0 failed
 ```
 
-## Ограничения
+## Limitations
 
-- TUN/системный VPN не тестировались (сборка без тега `with_gvisor`);
-- проверен только Linux x86_64/glibc 2.44;
+- TUN/system VPN was not tested (build without the `with_gvisor` tag);
+- only Linux x86_64/glibc 2.44 was verified;
 - per-link SOCKS5 — TCP only;
-- внешняя реальная VLESS-ссылка проверяется опционально через
+- an external real VLESS link is verified optionally via
   `MEWNET_TEST_VLESS`;
-- «пинг» — HTTP-задержка, не ICMP;
-- один экземпляр ядра на процесс;
-- `mewnet_close` и `mewnet_link_destroy` нельзя вызывать из async callback;
-- Xray 26.x блокирует loopback/private цели из VLESS-inbound по умолчанию;
-  в тестовом конфиге добавлено `finalRules: allow 127.0.0.0/8`.
+- "ping" is an HTTP delay, not ICMP;
+- one core instance per process;
+- `mewnet_close` and `mewnet_link_destroy` must not be called from an async callback;
+- Xray 26.x blocks loopback/private targets from the VLESS inbound by default;
+  the test config adds `finalRules: allow 127.0.0.0/8`.
 
-## 8. Подписки (`libmewnet`)
+## 8. Subscriptions (`libmewnet`)
 
-Сборка:
+Build:
 
 ```bash
 make subs
@@ -211,23 +211,23 @@ CTest:
 100% tests passed out of 3
 ```
 
-Проверено вручную:
+Verified manually:
 
-- plain-подписка с `#profile-title`, `#profile-update-interval`,
+- a plain subscription with `#profile-title`, `#profile-update-interval`,
   `#subscription-userinfo`;
-- base64-подписка, в том числе с переносами и без padding;
-- реальные GitHub-подписки:
-  - `barry-far/.../All_Configs_base64_Sub.txt` — 9167 конфигов,
-    ~2.7 с, RSS ~48 MB;
-  - `ALIILAPRO/.../server.txt` — 4323 конфига;
-  - `Pawdroid/Free-servers/main/sub` — 9 конфигов;
-- повторный fetch с `ETag` возвращает `304` и не меняет БД;
-- смена содержимого подписки удаляет устаревшие конфиги (`removed=2`);
-- тест живого прокси через локальный Xray: `alive=1`, `rating 0->1`,
-  метаданные имя/сервер/порт обновились;
-- тест мёртвого прокси: `rating 0->-1`, повторный тест в тот же день `+0`;
-- в `test_events` пишутся все результаты;
-- `libmewnet` экспортирует только `mewnet_subs_*` символы.
+- a base64 subscription, including ones with line breaks and without padding;
+- real GitHub subscriptions:
+  - `barry-far/.../All_Configs_base64_Sub.txt` — 9167 configs,
+    ~2.7 s, RSS ~48 MB;
+  - `ALIILAPRO/.../server.txt` — 4323 configs;
+  - `Pawdroid/Free-servers/main/sub` — 9 configs;
+- a repeated fetch with `ETag` returns `304` and does not change the DB;
+- changing the subscription content deletes stale configs (`removed=2`);
+- a test of a working proxy through a local Xray: `alive=1`, `rating 0->1`,
+  the name/server/port metadata was updated;
+- a test of a dead proxy: `rating 0->-1`, a repeated test on the same day `+0`;
+- all results are written to `test_events`;
+- `libmewnet` exports only `mewnet_subs_*` symbols.
 
 E2E:
 
@@ -239,53 +239,53 @@ make test-e2e-subs
 20 passed, 0 failed
 ```
 
-Проверено: plain/base64 ingest, группа `All`, дедупликация конфигов между
-подписками одной группы, `#name` не влияет на идентичность, смена пароля создаёт новую запись,
-ручной прокси (`manual=1`) переживает повторный fetch с generation-cleanup,
-живой прокси
-через локальный Xray (`alive=1`, `rating 0->1`, метаданные), мёртвый прокси
-(`rating 0->-1`, повторный тест в тот же день не меняет рейтинг),
+Verified: plain/base64 ingest, the `All` group, deduplication of configs between
+subscriptions of the same group, `#name` does not affect identity, a password change creates a new record,
+a manual proxy (`manual=1`) survives a repeated fetch with generation-cleanup,
+a working proxy
+through a local Xray (`alive=1`, `rating 0->1`, metadata), a dead proxy
+(`rating 0->-1`, a repeated test on the same day does not change the rating),
 `test_events`.
 
-## 9. GUI на Odin/raylib
+## 9. GUI on Odin/raylib
 
-Сборка:
+Build:
 
 ```bash
 make gui
 ```
 
-Проверено:
+Verified:
 
-- `odin build` с `vendor:raylib` и `libmewnet`;
-- запуск окна 1200x760 на текущем DISPLAY;
-- GUI использует `mewnet_subs_load_proxy_summaries` (страница без `link`) и
-  `mewnet_subs_get_proxy` только для выбранной записи;
-- добавление/удаление подписок и ручных прокси идёт через публичное API
-  `libmewnet`, без прямых SQL-запросов из GUI;
-- ручные прокси (`manual=1`) не удаляются generation-cleanup при fetch.
+- `odin build` with `vendor:raylib` and `libmewnet`;
+- a 1200x760 window starts on the current DISPLAY;
+- the GUI uses `mewnet_subs_load_proxy_summaries` (a page without `link`) and
+  `mewnet_subs_get_proxy` only for the selected record;
+- adding/removing subscriptions and manual proxies goes through the public
+  `libmewnet` API, without direct SQL queries from the GUI;
+- manual proxies (`manual=1`) are not deleted by generation-cleanup during a fetch.
 
-## 10. Кросс-компиляция mingw
+## 10. mingw cross-compilation
 
 ```bash
 make build-mingw-core
 make subs-mingw
 ```
 
-Получено:
+Produced:
 
 - `dist/windows/mewnet.dll` — PE32+ x86-64;
 - `dist/windows/libmewnet.dll.a` — import library;
 - `dist/windows/mewnet.dll` — PE32+ x86-64;
 - `build-mingw/apps/mewnet-subs/mewnet-subs.exe` — PE32+ x86-64.
 
-Запуск под Wine не проверялся.
+Running under Wine was not verified.
 
 ## 11. Discovery CLI `mewnet-watch`
 
-Проверка без Xray, на публичной подписке GitHub.
+Check without Xray, on a public GitHub subscription.
 
-Команда:
+Command:
 
 ```bash
 ./build/apps/mewnet-watch/mewnet-watch \
@@ -296,7 +296,7 @@ make subs-mingw
   https://raw.githubusercontent.com/barry-far/V2ray-Config/main/All_Configs_base64_Sub.txt
 ```
 
-Результат:
+Result:
 
 ```text
 ready=1 ready_ms=3412
@@ -306,7 +306,7 @@ HTTP/1.1 200 OK
 <TITLE>The Programming Language Lua
 ```
 
-Фрагмент лога:
+Log excerpt:
 
 ```text
 DB /tmp/opencode/final-watch.db
@@ -320,17 +320,17 @@ TEST t=... id=1 alive=1 delay=504 rating=1->1
 TEST t=... id=5 alive=1 delay=641 rating=1->1
 ```
 
-Итог:
+Results:
 
-- рабочий прокси найден за **3.412 с**;
-- `curl https://lua.org` через `http://127.0.0.1:18085` завершился за
-  **4.085 с** от запуска;
-- получен HTTP `200` и HTML `The Programming Language Lua`;
-- Xray не использовался;
-- после `READY` следующий rate-limited тест прошёл примерно через 20 с,
-  то есть стандартный лимитер работает.
+- a working proxy was found in **3.412 s**;
+- `curl https://lua.org` through `http://127.0.0.1:18085` finished
+  **4.085 s** after start;
+- HTTP `200` and the HTML `The Programming Language Lua` were received;
+- Xray was not used;
+- after `READY` the next rate-limited test ran about 20 s later,
+  i.e. the standard limiter works.
 
-`mewnet-watch` также кросс-компилируется под mingw:
+`mewnet-watch` also cross-compiles for mingw:
 
 ```text
 build-mingw/apps/mewnet-watch/mewnet-watch.exe
@@ -338,13 +338,13 @@ build-mingw/apps/mewnet-watch/mewnet-watch.exe
 
 ## 12. GTK4 control panel `mewnet-gtk`
 
-Сборка:
+Build:
 
 ```bash
-make subs   # собирает mewnet-gtk, если найден gtk4.pc
+make subs   # builds mewnet-gtk if gtk4.pc is found
 ```
 
-Запуск на чистой базе, одна публичная подписка, без Xray:
+Run on a fresh database, one public subscription, without Xray:
 
 ```bash
 ./build/apps/mewnet-gtk/mewnet-gtk \
@@ -354,7 +354,7 @@ make subs   # собирает mewnet-gtk, если найден gtk4.pc
   https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
 ```
 
-Результат:
+Result:
 
 ```text
 ready_ms=3940
@@ -362,7 +362,7 @@ curl_rc=0 total_ms=5237
 <TITLE>The Programming Language Lua
 ```
 
-Лог окна:
+Window log:
 
 ```text
 DB /tmp/opencode/gtk-fresh.db
@@ -376,37 +376,37 @@ ACTIVE id=2 name=新西兰+V2CROSS.COM delay=1366
 READY local=http://127.0.0.1:18097
 ```
 
-Проверено:
+Verified:
 
-- при пустой базе окно пишет `WAIT подписок нет — добавьте URL в окне` и
-  ждёт; после добавления/запуска с URL сразу качает подписку и активирует
-  найденный узел;
-- при существующей базе с alive-узлом прокси активируется сразу при старте;
-- кнопка «Сменить прокси» переключает на следующий живой узел:
+- with an empty database the window prints `WAIT no subscriptions yet - add a URL`
+  ("no subscriptions — add a URL in the window") and waits; after adding/starting with a URL it
+  downloads the subscription at once and activates the discovered node;
+- with an existing database that has an alive node, the proxy is activated immediately at startup;
+- the "Switch proxy" button switches to the next alive node:
   ```text
   SWITCH requested
   ACTIVE id=5 name=新西兰+V2CROSS.COM delay=2814
   SWITCH id=5 name=新西兰+V2CROSS.COM
   ```
-- после `READY` discovery не трогает живые узлы и добирает пул: при пуле
-  меньше 4 живых шаг около 2 с, при полном — 24 с;
+- after `READY` discovery leaves the alive nodes alone and tops up the pool: with fewer
+  than 4 alive in the pool the step is about 2 s, and 24 s with a full pool;
   ```text
   TEST id=5 alive=1 delay=770 rating=1->1
   TEST id=5 alive=1 delay=2814 rating=1->1
   ```
-- `--proxy-port 0` выбирает свободный порт и показывает его в окне:
+- `--proxy-port 0` picks a free port and shows it in the window:
   `PROXY http://127.0.0.1:36617`;
-- при закрытии окна/SIGTERM процесс завершает discovery и Mihomo, порт больше
-  не слушается.
+- on window close/SIGTERM the process shuts down discovery and Mihomo, and the port is no longer
+  listened on.
 
-### 12.1. Автоматическая проверка отказоустойчивости
+### 12.1. Automated failover check
 
 ```bash
 make test-agent
 ```
 
-Тест офлайновый: локальный `204` origin, три локальных HTTP-прокси, подписка
-на них, запуск `mewnet-cli --headless`. Результат:
+The test is offline: a local `204` origin, three local HTTP proxies, a subscription
+to them, and a `mewnet-cli --headless` run. Result:
 
 ```text
 PASS  bootstrap: READY
@@ -432,67 +432,67 @@ PASS  wait: traffic works
 19 passed, 0 failed
 ```
 
-Проверены: bootstrap, рост пула, случайное переключение среди лучших, health-check и
-автоматический failover, полный отказ всех прокси, возврат нового узла,
-а также сценарий «пустая база → подписка появилась → автоматический запуск».
-Спецификация и матрица отказов — в
+Verified: bootstrap, pool growth, random switching among the best, health-check and
+automatic failover, complete outage of all proxies, return of a new node,
+as well as the "empty database → subscription appeared → automatic start" scenario.
+The specification and the failure matrix are in
 [`docs/GTK_RELIABILITY.md`](GTK_RELIABILITY.md).
 
-Память UI проверена на базах с 7 и 4226 прокси: RSS ~186 МБ и ~190 МБ
-соответственно, то есть разница около 4 МБ.
+UI memory was verified on databases with 7 and 4226 proxies: RSS ~186 MB and ~190 MB
+respectively, i.e. a difference of about 4 MB.
 
-UI smoke без ручных кликов:
+UI smoke without manual clicks:
 
 ```bash
 ./build/apps/mewnet-gtk/mewnet-gtk --db /tmp/ui.db --screenshot /tmp/ui.png
 ```
 
-Окно отрисовывается в PNG и приложение завершается.
+The window is rendered to a PNG and the application exits.
 
 ## 13. Agent library, dedup and memory scaling
 
 ### 13.1. Dedup
 
-На копии рабочей базы (21 184 прокси, 30 подписок) открытие с новой схемой:
+On a copy of a working database (21 184 proxies, 30 subscriptions), opening with the new schema:
 
 ```text
-до:      21184 прокси
-после:   12638 прокси
-удалено:  8546 дубликатов
-дублей identity: 0
-время миграции: ~2.2 с
+before:   21184 proxies
+after:    12638 proxies
+removed:   8546 duplicates
+duplicate identities: 0
+migration time: ~2.2 s
 ```
 
-Identity = SHA-256(protocol + host + port + credentials). Имя, `#fragment` и
-транспортные опции не учитываются. Уникальный индекс:
+Identity = SHA-256(protocol + host + port + credentials). The name, `#fragment` and
+transport options are not taken into account. Unique index:
 `proxies(group_id, identity_hash)`.
 
-### 13.2. Память
+### 13.2. Memory
 
 ```text
-30 подписок, 12 638 прокси:      GTK ~159 МБ RSS
-10 030 подписок, 12 638 прокси:  GTK ~159 МБ RSS
+30 subscriptions, 12 638 proxies:      GTK ~159 MB RSS
+10 030 subscriptions, 12 638 proxies:  GTK ~159 MB RSS
 ```
 
-Список подписок в UI — страница по 50 строк; agent использует SQL-счётчики,
-`ORDER BY ... LIMIT 1` и не загружает миллионы строк. SQLite cache ограничен
-8 МБ, `temp_store=FILE`.
+The subscription list in the UI is a page of 50 rows; the agent uses SQL counters,
+`ORDER BY ... LIMIT 1` and does not load millions of rows. The SQLite cache is limited to
+8 MB, `temp_store=FILE`.
 
-### 13.3. Долгие подписки
+### 13.3. Long subscriptions
 
-Подписка скачивается во временный файл; транзакция SQLite начинается только
-после загрузки. Остановка CLI во время скачивания большой подписки:
+A subscription is downloaded to a temporary file; the SQLite transaction starts only
+after the download. Stopping the CLI while a large subscription is downloading:
 
 ```text
 exit_ms=108
 ```
 
-То есть fetch отменяется и не блокирует закрытие/health-check.
+That is, the fetch is cancelled and does not block shutdown/health-check.
 
-### 13.4. Общий agent
+### 13.4. Shared agent
 
-`mewnet_agent` в `libmewnet` используется GTK4 и CLI/TUI. Офлайновый
-тест `make test-agent` (ранее `test-gtk-agent`) проходит 19/19 на CLI:
+`mewnet_agent` in `libmewnet` is used by GTK4 and CLI/TUI. The offline
+test `make test-agent` (previously `test-gtk-agent`) passes 19/19 on the CLI:
 
 ```text
 bootstrap, pool growth, random switch across 3 nodes, health failover,
@@ -503,14 +503,15 @@ CLI/TUI:
 
 ```bash
 make cli
-# s — случайный лучший прокси, q — выход
+# s — random best proxy, q — quit
 ```
 
-### 13.5. Health-check через локальный прокси
+### 13.5. Health-check through the local proxy
 
-Активный узел проверяется реальным `GET https://lua.org` через
-`http://127.0.0.1:<port>` (не только `URLTest` адаптера). Политика: 3 отказа
-из последних 5. Проверка на живом приложении:
+The active node is verified with a real `GET https://lua.org` through
+`http://127.0.0.1:<port>` (not just the adapter's `URLTest`). Policy at the time
+of this run: 3 failures out of the last 5; the current build uses 2 out of the
+last 3 instead. Check on a live application:
 
 ```text
 ACTIVE id=9792 ...
@@ -521,45 +522,45 @@ HEALTH FAIL id=9792 ...
 ACTIVE id=4720 ...
 ```
 
-Failover произошёл через ~15 секунд после первой неудачи, следующий запрос
-`curl` через локальный прокси вернул HTTP 200.
+The failover happened ~15 seconds after the first failure, and the next `curl`
+request through the local proxy returned HTTP 200.
 
-Медленное discovery вынесено в отдельный поток и отдельное соединение SQLite,
-поэтому даже «зависший» тест узла не задерживает health-check и failover.
-Таймаут теста дополнительно ограничен в Go (`safeURLTest`) на случай, если
-адаптер игнорирует отмену.
+Slow discovery runs in a separate thread and a separate SQLite connection,
+so even a "stuck" node test does not delay health-check and failover.
+The test timeout is additionally bounded in Go (`safeURLTest`) in case the
+adapter ignores cancellation.
 
-## 14. Повторная проверка на Ubuntu 24.04 (2026-11-16)
+## 14. Re-verification on Ubuntu 24.04 (2026-11-16)
 
-Полная перепроверка с нуля на другой машине: чистая сборка, весь офлайновый
-набор тестов, e2e с локальным Xray и живой прогон CLI на публичной подписке.
+A full re-verification from scratch on another machine: a clean build, the entire offline
+test suite, e2e with a local Xray, and a live CLI run on a public subscription.
 
-### 14.1. Окружение
+### 14.1. Environment
 
-| Параметр | Значение |
+| Parameter | Value |
 |---|---|
-| ОС | Ubuntu 24.04 (LTS) |
-| Ядро | 7.3.4-3-liquorix-amd64 |
+| OS | Ubuntu 24.04 (LTS) |
+| Kernel | 7.3.4-3-liquorix-amd64 |
 | libc | glibc 2.39 |
-| Компилятор | gcc 13.3.0; clang 23.1.4 (mise) для `make test-c` |
+| Compiler | gcc 13.3.0; clang 23.1.4 (mise) for `make test-c` |
 | Go | 1.27.3 linux/amd64 (mise) |
 | CMake | 4.4.5 (mise) |
 | Python | 3.14.9 |
 | Xray (e2e) | 26.11.9 |
-| Память | 5.9 ГБ + 4.8 ГБ swap |
+| Memory | 5.9 GB + 4.8 GB swap |
 
-Сборка:
+Build:
 
 ```bash
-mise install go@1.27.3 clang@23.1.4 cmake@4.4.5   # android-sdk/odin не нужны
+mise install go@1.27.3 clang@23.1.4 cmake@4.4.5   # android-sdk/odin not needed
 CGO_ENABLED=1 CC=gcc go build -p=2 -trimpath -buildmode=c-shared \
   -ldflags "-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33" \
   -o ../../dist/libmewnet.so ./cmd/mewnet
 ```
 
-Результат: `dist/libmewnet.so` — 56 MiB, 115 экспортируемых `mewnet_*`.
+Result: `dist/libmewnet.so` — 56 MiB, 115 exported `mewnet_*`.
 
-Приложения собирались системным компилятором:
+The applications were built with the system compiler:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
@@ -567,35 +568,35 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j2
 ```
 
-### 14.2. Итоги
+### 14.2. Results
 
-| Набор | Команда | Результат |
+| Suite | Command | Result |
 |---|---|---|
-| Go-тесты | `go test ./...` | `ok mewnet`, `ok mewnet/internal/core` |
-| Race | `go test -race -count=1 ./...` | `ok mewnet` 1.27s, `ok .../internal/core` 1.16s, гонок нет |
+| Go tests | `go test ./...` | `ok mewnet`, `ok mewnet/internal/core` |
+| Race | `go test -race -count=1 ./...` | `ok mewnet` 1.27s, `ok .../internal/core` 1.16s, no races |
 | ABI (ctypes) | `tests/python/test_api.py` | 10/10 |
 | SharedVPNLink | `tests/python/test_links.py` | 14/14 |
-| C ABI | `tests/c/test_api.c` | 15 проверок, все PASS |
-| Stress | `tests/python/test_stress.py` | 100 циклов, fd 10→10, goroutines 5→5 |
-| Подписки | `ctest` | 3/3 (base64, sha256, rating) |
-| Agent/CLI офлайн | `tests/e2e/run_gtk_agent.py` | 19/19 |
+| C ABI | `tests/c/test_api.c` | 15 checks, all PASS |
+| Stress | `tests/python/test_stress.py` | 100 cycles, fd 10→10, goroutines 5→5 |
+| Subscriptions | `ctest` | 3/3 (base64, sha256, rating) |
+| Agent/CLI offline | `tests/e2e/run_gtk_agent.py` | 19/19 |
 | E2E VLESS | `tests/e2e/run.py` | 18/18 |
-| E2E 4 прокси | `tests/e2e/run_links.py` | 39/39 |
-| E2E подписки | `tests/e2e/run_subs.py` | 20/20 |
-| C ping, локальный Xray | `tests/e2e/c_ping_demo.py` | 4 мс |
+| E2E 4 proxies | `tests/e2e/run_links.py` | 39/39 |
+| E2E subscriptions | `tests/e2e/run_subs.py` | 20/20 |
+| C ping, local Xray | `tests/e2e/c_ping_demo.py` | 4 ms |
 
-Stress в цифрах:
+Stress in numbers:
 
 ```text
 cycles=100 fds=10->10 goroutines=5->5 rss=77136KiB->81540KiB
 ```
 
-Рост RSS ~4.3 MiB на 100 hot-swap циклов — как и в §5.
+RSS growth of ~4.3 MiB per 100 hot-swap cycles — the same as in §5.
 
-### 14.3. Живой прогон CLI
+### 14.3. Live CLI run
 
-`mewnet-cli --headless` на публичной подписке
-`Pawdroid/Free-servers/main/sub`, порт 18199, `pool-target 6`:
+`mewnet-cli --headless` on the public subscription
+`Pawdroid/Free-servers/main/sub`, port 18199, `pool-target 6`:
 
 ```text
 == direct IP: 2.26.20.60
@@ -609,28 +610,28 @@ cycles=100 fds=10->10 goroutines=5->5 rss=77136KiB->81540KiB
 == exit code: 0
 ```
 
-Что подтверждено:
+What was confirmed:
 
-- `READY` примерно через 20 с после старта на 12 конфигах из подписки;
-- exit IP меняется (`2.26.20.60` → `163.123.193.24`), то есть трафик реально
-  уходит через узел, а не через DIRECT;
-- `HTTP 200` и `204` через локальный mixed-прокси;
-- `SIGUSR1` переключает узел, exit IP меняется на `179.254.191.252`,
-  трафик продолжает работать;
-- `SIGTERM` завершает процесс с кодом 0, `Mihomo shutting down` без ошибок;
-- discovery добирает пул (`alive` 3→6) и останавливается на `pool-target`.
+- `READY` about 20 s after start on 12 configs from the subscription;
+- the exit IP changes (`2.26.20.60` → `163.123.193.24`), i.e. traffic really
+  leaves through the node, not through DIRECT;
+- `HTTP 200` and `204` through the local mixed proxy;
+- `SIGUSR1` switches the node, the exit IP changes to `179.254.191.252`,
+  and traffic keeps working;
+- `SIGTERM` terminates the process with code 0, `Mihomo shutting down` with no errors;
+- discovery tops up the pool (`alive` 3→6) and stops at `pool-target`.
 
-Состав подписки и что реально прошло трафиком: 12 конфигов —
-`ss` (6), `vless` (3), `trojan` (2), `hysteria2` (1); из них 4 с `security=tls`,
-2 с `security=reality`. Живыми оказались `ss` (4), `vless`+TLS (1) и
-`hysteria2`+TLS (1) — активным после переключения был `hysteria2`/TLS, то есть
-TLS-ветка проверена трафиком. Оба REALITY-узла в этой подписке были мертвы,
-поэтому REALITY отдельно не подтверждён.
+Subscription composition and what actually passed traffic: 12 configs —
+`ss` (6), `vless` (3), `trojan` (2), `hysteria2` (1); of these, 4 use `security=tls`,
+2 use `security=reality`. The alive ones turned out to be `ss` (4), `vless`+TLS (1) and
+`hysteria2`+TLS (1) — the active one after the switch was `hysteria2`/TLS, i.e. the
+TLS branch was verified with traffic. Both REALITY nodes in this subscription were dead,
+so REALITY alone was not confirmed.
 
-### 14.4. Отличия от исходного прогона
+### 14.4. Differences from the original run
 
-- GTK4-панель не проверялась: на машине нет `gtk4.pc` (`-DMEWNET_BUILD_GTK=OFF`),
-  GUI на Odin и mingw-кросс-компиляция тоже не запускались;
-- приложения собраны gcc, а не clang; `-DCMAKE_C_COMPILER=gcc`;
-- из `dist/` удалены устаревшие артефакты старого имени (`libmilib.so`,
-  `libmilib.h`).
+- the GTK4 panel was not verified: the machine has no `gtk4.pc` (`-DMEWNET_BUILD_GTK=OFF`),
+  and the Odin GUI and mingw cross-compilation were not run either;
+- the applications were built with gcc, not clang; `-DCMAKE_C_COMPILER=gcc`;
+- stale artifacts of the old name (`libmilib.so`,
+  `libmilib.h`) were removed from `dist/`.

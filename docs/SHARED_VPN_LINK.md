@@ -1,18 +1,18 @@
 # SharedVPNLink API (v2)
 
-`SharedVPNLink` — объект, созданный из share-ссылки (`vless://`, `vmess://`,
-`trojan://`, `ss://`, ...). Он объединяет:
+`SharedVPNLink` is an object created from a share link (`vless://`, `vmess://`,
+`trojan://`, `ss://`, ...). It combines:
 
-1. прокси в группе `MEWNET` (участвует в hot-swap через `mewnet_select_proxy`);
-2. локальный SOCKS5 endpoint на `127.0.0.1:<random>` с обязательной
-   авторизацией;
-3. методы `ping`, `speed`, `exit_ip` и их async-варианты.
+1. a proxy in the `MEWNET` group (participates in hot-swap via `mewnet_select_proxy`);
+2. a local SOCKS5 endpoint on `127.0.0.1:<random>` with mandatory
+   authentication;
+3. the `ping`, `speed`, `exit_ip` methods and their async variants.
 
-Заголовки: `libs/mewnet/cmd/mewnet/mewnet.h`, `libs/mewnet/cmd/mewnet/mewnet_types.h`.
-ABI v2 — структуры C, никаких JSON-строк. Ошибки возвращаются в результате,
-для простых операций — кодом `mewnet_error_code`.
+Headers: `libs/mewnet/cmd/mewnet/mewnet.h`, `libs/mewnet/cmd/mewnet/mewnet_types.h`.
+ABI v2 — C structs, no JSON strings. Errors are returned in the result, and for
+simple operations as a `mewnet_error_code` code.
 
-## Создание
+## Creation
 
 ```c
 mewnet_link_options options = mewnet_link_options_default();
@@ -29,26 +29,26 @@ if (created.link == NULL) {
 mewnet_link *link = created.link;
 ```
 
-`mewnet_link_options_default()` ставит `local_proxy = true` и
-`select_proxy = false`. Не используйте полностью нулевую структуру, если нужен
-локальный SOCKS5: берите default и меняйте поля.
+`mewnet_link_options_default()` sets `local_proxy = true` and
+`select_proxy = false`. Do not use a fully zeroed struct if you need a local
+SOCKS5: take the default and change the fields.
 
-| Поле | По умолчанию | Смысл |
+| Field | Default | Meaning |
 |---|---|---|
-| `name` | fragment / type-server-port | имя прокси и ссылки |
-| `select_proxy` | `false` | сразу выбрать прокси в `MEWNET` |
-| `local_proxy` | `true` | поднять per-link SOCKS5 |
-| `username` | `mewnet` | логин локального SOCKS5 |
-| `password` | случайные 18 байт | пароль локального SOCKS5 |
-| `proxy_password` | из ссылки | переопределить upstream credential |
+| `name` | fragment / type-server-port | name of the proxy and the link |
+| `select_proxy` | `false` | select the proxy in `MEWNET` immediately |
+| `local_proxy` | `true` | bring up a per-link SOCKS5 |
+| `username` | `mewnet` | login for the local SOCKS5 |
+| `password` | 18 random bytes | password for the local SOCKS5 |
+| `proxy_password` | from the link | override the upstream credential |
 
-`proxy_password` подставляет credential в зависимости от протокола:
+`proxy_password` substitutes the credential depending on the protocol:
 
 - VLESS/VMess → `uuid`;
 - Trojan/Shadowsocks/Hysteria/... → `password`;
 - SOCKS5/HTTP → `username`/`password`.
 
-## Информация
+## Info
 
 ```c
 mewnet_link_info info = mewnet_link_get_info(link);
@@ -62,10 +62,10 @@ if (info.ok) {
 }
 ```
 
-Поля: `ok`, `error`, `id`, `name`, `proxy_type`, `server`, `port`, `uri`,
+Fields: `ok`, `error`, `id`, `name`, `proxy_type`, `server`, `port`, `uri`,
 `socks_addr`, `socks_username`, `socks_password`, `selected`.
 
-Список всех ссылок:
+List of all links:
 
 ```c
 mewnet_link_list links = mewnet_load_links(instance);
@@ -91,8 +91,8 @@ if (ping.ok) {
 }
 ```
 
-Задержка измеряется **трафиком через прокси** (`URLTest`: HTTP HEAD через
-VLESS/...), а не ICMP-пингом до сервера прокси.
+The delay is measured with **traffic through the proxy** (`URLTest`: HTTP HEAD
+over VLESS/...), not with an ICMP ping to the proxy server.
 
 ## Speed
 
@@ -108,7 +108,7 @@ if (speed.ok) {
 }
 ```
 
-Поля результата: `ok`, `error`, `status`, `bytes`, `seconds`,
+Result fields: `ok`, `error`, `status`, `bytes`, `seconds`,
 `bytes_per_second`, `mbps`.
 
 ## Exit IP
@@ -124,10 +124,10 @@ if (exit_ip.ok && exit_ip.valid) {
 }
 ```
 
-Опции: `url` (по умолчанию `https://api.ipify.org`), `format`
+Options: `url` (default `https://api.ipify.org`), `format`
 (`MEWNET_EXIT_IP_TEXT` / `MEWNET_EXIT_IP_JSON`), `timeout_ms`.
 
-## Много прокси одновременно
+## Many proxies at once
 
 ```c
 mewnet_link *links[] = { link1, link2, link3 };
@@ -148,12 +148,12 @@ for (size_t i = 0; i < many.count; i++) {
 mewnet_unload_ping_many(many);
 ```
 
-Все пинги выполняются в отдельных горутинах; результат сохраняет порядок
-входного массива ссылок.
+All pings run in separate goroutines; the result preserves the order of the
+input link array.
 
 ## Async
 
-Callback получает `mewnet_task_result`:
+The callback receives a `mewnet_task_result`:
 
 ```c
 static void on_done(const mewnet_task_result *result, void *user) {
@@ -167,7 +167,7 @@ mewnet_task *task = mewnet_link_ping_async(link, &delay, on_done, NULL);
 mewnet_task_destroy(task);
 ```
 
-Либо poll без callback:
+Or poll without a callback:
 
 ```c
 mewnet_task *task = mewnet_link_ping_async(link, &delay, NULL, NULL);
@@ -179,40 +179,40 @@ while ((result = mewnet_task_poll(task)).state == MEWNET_TASK_RUNNING) {
 mewnet_task_destroy(task);
 ```
 
-Правила:
+Rules:
 
-- callback вызывается на произвольном OS-потоке;
-- в callback нельзя вызывать `mewnet_close`, `mewnet_link_destroy`,
-  `mewnet_task_destroy`;
-- `mewnet_link_destroy` отменяет и ждёт задачи этой ссылки;
-- `mewnet_close` отменяет и ждёт все задачи инстанса;
-- `mewnet_task_cancel` только запрашивает отмену;
-- `mewnet_task_destroy` отменяет, ждёт и освобождает задачу.
+- the callback is invoked on an arbitrary OS thread;
+- do not call `mewnet_close`, `mewnet_link_destroy`, `mewnet_task_destroy`
+  from the callback;
+- `mewnet_link_destroy` cancels and waits for this link's tasks;
+- `mewnet_close` cancels and waits for all tasks of the instance;
+- `mewnet_task_cancel` only requests cancellation;
+- `mewnet_task_destroy` cancels, waits for and frees the task.
 
-Поля `mewnet_task_result`: `state`, `kind`, `error`, `delay`, `ping`, `speed`,
-`exit_ip`, `pings`, `ping_count`.
+Fields of `mewnet_task_result`: `state`, `kind`, `error`, `delay`, `ping`,
+`speed`, `exit_ip`, `pings`, `ping_count`.
 
-## Маршрутизация трафика
+## Traffic routing
 
-Через глобальный mixed inbound и выбранную ссылку:
+Through the global mixed inbound and the selected link:
 
 ```bash
 mewnet_select_proxy(instance, "my-node");
 curl -x http://127.0.0.1:<mixed_port> https://example.com
 ```
 
-Через конкретную ссылку, независимо от выбора:
+Through a specific link, regardless of the selection:
 
 ```bash
 curl --socks5-hostname 127.0.0.1:<link_port> \
      --proxy-user mewnet:<password> https://example.com
 ```
 
-Per-link SOCKS5 поддерживает TCP. UDP не проксируется.
+Per-link SOCKS5 supports TCP. UDP is not proxied.
 
-## Как проверить ping из C
+## How to test ping from C
 
-Готовый пример — `tests/c/test_ping.c`:
+A ready-made example is `tests/c/test_ping.c`:
 
 ```bash
 cc tests/c/test_ping.c -Iinclude -Ldist -lmewnet \
@@ -222,46 +222,47 @@ cc tests/c/test_ping.c -Iinclude -Ldist -lmewnet \
                  'https://www.gstatic.com/generate_204'
 ```
 
-Или через переменные окружения:
+Or via environment variables:
 
 ```bash
 MEWNET_TEST_VLESS='vless://...' ./dist/test_ping
 ```
 
-Проверка без реальной ссылки (поднимает локальный Xray и target `204`):
+A check without a real link (brings up a local Xray and a `204` target):
 
 ```bash
 make test-c-ping-local
 ```
 
-Пример вывода:
+Example output:
 
 ```text
 3
 ```
 
-Это задержка в миллисекундах.
+That is the delay in milliseconds.
 
-## Удаление
+## Removal
 
 ```c
 mewnet_link_destroy(link);
 ```
 
-Удаляет прокси из `MEWNET`, закрывает SOCKS-listener, отменяет и ждёт async
-задачи этой ссылки, рвёт соединения с цепочкой прокси и освобождает handle.
-После вызова handle использовать нельзя. Прокси, принадлежащий ссылке, нельзя
-удалить через `mewnet_remove_proxy` — вернётся ошибка, а в лог будет подсказка
-использовать `mewnet_link_destroy`.
+Removes the proxy from `MEWNET`, closes the SOCKS listener, cancels and waits
+for this link's async tasks, tears down connections to the proxy chain and frees
+the handle. After the call the handle must not be used. A proxy owned by a link
+cannot be removed via `mewnet_remove_proxy` — an error is returned, and the log
+suggests using `mewnet_link_destroy`.
 
-## Потоки и безопасность
+## Threads and safety
 
-- операции с `mewnet_instance*` и `mewnet_link*` можно вызывать из разных потоков;
-- `mewnet_close` и `mewnet_link_destroy` должны быть эксклюзивными: не
-  вызывайте их одновременно с другими операциями над тем же объектом;
-- callback приходит на произвольном потоке; для UI используйте poll или
-  перекладывайте результат в свою очередь;
-- log callback тоже вызывается на произвольном потоке;
-- не вызывайте `mewnet_close`/destroy из callback;
-- panic в фоновой горутине mihomo не перехватывается — это ограничение
-  in-process библиотеки.
+- operations on `mewnet_instance*` and `mewnet_link*` can be called from
+  different threads;
+- `mewnet_close` and `mewnet_link_destroy` must be exclusive: do not call them
+  concurrently with other operations on the same object;
+- the callback arrives on an arbitrary thread; for UI use poll or move the
+  result into your own queue;
+- the log callback is also invoked on an arbitrary thread;
+- do not call `mewnet_close`/destroy from the callback;
+- a panic in a mihomo background goroutine is not caught — that is a limitation
+  of the in-process library.

@@ -1,175 +1,175 @@
-# Ultra-reliable `mewnet-gtk`: спецификация
+# Ultra-reliable `mewnet-gtk`: specification
 
-Цель: приложение в любой момент времени должно либо отдавать рабочий прокси на
-`127.0.0.1:<port>`, либо активно и предсказуемо восстанавливаться. Оно не
-должно молча зависать в состоянии «прокси есть, но не работает» и не должно
-бесконечно долбить сеть, когда всё уже работает.
+Goal: at any moment the application must either serve a working proxy on
+`127.0.0.1:<port>` or actively and predictably recover. It must not silently
+hang in a "proxy exists but does not work" state, and it must not hammer the
+network endlessly when everything already works.
 
-## Архитектура
+## Architecture
 
-Надёжность вынесена в библиотеку `libmewnet` (`src/agent.c`). GTK4 и
-CLI/TUI — тонкие клиенты: они открывают базу и Mihomo, запускают agent,
-рисуют события и отправляют команды `switch` / `fetch subscription`.
+Reliability lives in the `libmewnet` library (`src/agent.c`). GTK4 and the
+CLI/TUI are thin clients: they open the database and Mihomo, start the agent,
+render events, and send `switch` / `fetch subscription` commands.
 
-## Инварианты
+## Invariants
 
-1. Локальный mixed-прокси слушает с момента старта и до закрытия окна.
-2. Если в базе есть живой узел, приложение выбирает его автоматически.
-3. Активный узел проверяется отдельно от discovery. Два подряд неудачных
-   health-check'а из последних пяти помечают его мёртвым и запускают немедленный failover.
-4. Пока рабочий узел есть, discovery не перепроверяет живые узлы. Он ищет
-   только непроверенные, затем мёртвые.
-5. Кнопка «сменить прокси» выбирает случайный узел из лучших живых
-   (рейтинг, затем задержка), исключая текущий и предыдущий выбранный.
-6. Приоритеты подписок и групп удалены из поведения: выбор идёт по рейтингу,
-   задержке и `health_failures`.
-7. Health-check — это сигнал для выбора, а не проверка «живости»: он не
-   выставляет `alive=0`. Иначе временные сбои регулярно обнуляли бы пул.
-5. Пока рабочих узлов нет, discovery агрессивный: пачки по 70, остановка на
-   первом успехе.
-6. Если все известные узлы мертвы, приложение не зацикливается на них:
-   оно перепроверяет мёртвых и одновременно тянет следующую подписку.
-7. Если подписок нет, приложение ждёт. Как только подписка появляется, она
-   скачивается и discovery запускается автоматически.
-8. Закрытие окна останавливает и discovery, и локальный прокси.
+1. The local mixed proxy listens from startup until the window is closed.
+2. If the database holds a live node, the application selects it automatically.
+3. The active node is checked separately from discovery. Two failed health
+   checks out of the last three mark it dead and trigger an immediate failover.
+4. While a working node exists, discovery does not re-check live nodes. It looks
+   only at untested ones, then at dead ones.
+5. The "change proxy" button picks a random node from the best live ones
+   (rating, then latency), excluding the current and the previously selected one.
+6. Subscription and group priorities are removed from the behaviour: selection is
+   driven by rating, latency, and `health_failures`.
+7. Health-check is a signal for selection, not a liveness test: it does not
+   set `alive=0`. Otherwise temporary failures would regularly zero the pool.
+8. While there are no working nodes, discovery is aggressive: batches of 70,
+   stopping at the first success.
+9. If all known nodes are dead, the application does not loop on them:
+   it re-checks dead nodes and pulls the next subscription at the same time.
+10. If there are no subscriptions, the application waits. As soon as a subscription
+   appears, it is downloaded and discovery starts automatically.
+11. Closing the window stops both discovery and the local proxy.
 
-## Состояния
+## States
 
 ```text
 WAIT_SUBSCRIPTIONS
-  нет подписок -> ждём; при добавлении сразу fetch
+  no subscriptions -> wait; on addition fetch immediately
 
 FAST_DISCOVERY  (alive == 0)
   batch(70, first-success)
-    -> найден: ACTIVE, READY, HEALTHY
-    -> не найден: emergency fetch следующей подписки, повторить
+    -> found: ACTIVE, READY, HEALTHY
+    -> not found: emergency fetch of the next subscription, retry
 
 HEALTHY  (alive > 0)
-  health check активного каждые 6 с (2 отказа из 3 -> failover)
-  slow discovery: 1 кандидат за шаг
-    pool < 4  -> шаг 2 с
-    pool >= 4 -> шаг 24 с
-  fetch подписки: не чаще 1/час
+  health check of the active every 6 s (2 failures out of 3 -> failover)
+  slow discovery: 1 candidate per step
+    pool < target  -> step 2 s
+    pool >= target -> step 24 s
+  subscription fetch: no more than once per hour
 
 FAILOVER
-  пометить активный мёртвым
-    -> следующий alive + быстрая проверка
-    -> проверка не прошла: пометить мёртвым, взять следующий
-    -> нет alive: FAST_DISCOVERY
+  mark the active one dead
+    -> next alive + quick check
+    -> check failed: mark dead, take the next
+    -> no alive: FAST_DISCOVERY
 ```
 
-## Тайминги по умолчанию
+## Default timings
 
-| Параметр | Значение | Смысл |
+| Parameter | Value | Meaning |
 |---|---:|---|
-| `--batch` | 70 | размер быстрой пачки |
-| `--concurrency` | 70 | одновременных проверок |
-| `--timeout` | 4000 мс | таймаут одного узла |
-| `--pool-target` | 12 | сколько живых держать про запас |
-| `--health-interval` | 6 с | период проверки активного |
-| `--health-timeout` | 2500 мс | таймаут health-check |
-| отказов до failover | 2 из 3 | защита от ложного срабатывания и от «мигающих» узлов |
-| `--slow-interval` | 24 с | шаг discovery, когда pool полон |
-| шаг при pool < target | 2 с | быстрый рост запаса |
-| `--fetch-interval` | 3600 с | обычное обновление подписки |
-| cooldown pool-batch | 10 с | после «сменить прокси» |
-| cooldown emergency fetch | 10 с / 30 с | полный отказ / переключение без кандидатов |
+| `--batch` | 70 | fast batch size |
+| `--concurrency` | 70 | concurrent checks |
+| `--timeout` | 4000 ms | timeout for a single node |
+| `--pool-target` | 12 | how many live nodes to keep in reserve |
+| `--health-interval` | 6 s | check period for the active node |
+| `--health-timeout` | 2500 ms | health-check timeout |
+| failures before failover | 2 of 3 | protection against false positives and against "flapping" nodes |
+| `--slow-interval` | 24 s | discovery step when the pool is full |
+| step when pool < target | 2 s | fast growth of the reserve |
+| `--fetch-interval` | 3600 s | regular subscription refresh |
+| pool-batch cooldown | 10 s | after "change proxy" |
+| emergency fetch cooldown | 10 s / 30 s | total failure / switching with no candidates |
 
-Худшее время обнаружения мёртвого активного узла — примерно
-`health_interval + health_timeout * 3` (около 15–20 с с учётом повторов).
+The worst-case detection time for a dead active node is roughly
+`health_interval + health_timeout * 3` (about 15–20 s including retries).
 
-## Что происходит в отказах
+## What happens on failures
 
-| Ситуация | Действие |
+| Situation | Action |
 |---|---|
-| активный узел перестал отвечать | 3 фейла из последних 5 -> `record_test(false)` -> следующий alive |
-| активный удалён из подписки | при следующем цикле `current_id=0` -> `first_alive` |
-| живых нет, непроверенные есть | `BATCH reason=fast`, first-success |
-| живых нет, непроверенных нет | `BATCH` перепроверяет мёртвых + `emergency FETCH` |
-| подписка не скачалась | лог `FETCH FAILED`, повтор с паузой; приложение не падает |
-| подписок нет | `WAIT no subscriptions`, polling 0.5 с |
-| новая подписка добавлена | `pending_fetch_id` -> fetch сразу, затем discovery |
-| «сменить прокси», есть другие alive | случайный из лучших (top-5 по рейтингу/задержке), без текущего и предыдущего |
-| «сменить прокси», других alive нет | пачка кандидатов; если пусто — emergency fetch |
-| pool < target после переключения | один pool-batch (не меняет активный узел) |
-| окно закрыто | stop worker -> `mewnet_close` -> порт освобождён |
+| the active node stopped responding | 2 failures out of the last 3 -> `record_test(false)` -> next alive |
+| the active node was removed from the subscription | on the next cycle `current_id=0` -> `first_alive` |
+| no live nodes, untested ones remain | `BATCH reason=fast`, first-success |
+| no live nodes, no untested ones | `BATCH` re-checks dead ones + `emergency FETCH` |
+| the subscription failed to download | log `FETCH FAILED`, retry after a pause; the application does not crash |
+| no subscriptions | `WAIT no subscriptions`, polling 0.5 s |
+| a new subscription was added | `pending_fetch_id` -> fetch immediately, then discovery |
+| "change proxy", other alive nodes exist | random from the best (top-5 by rating/latency), excluding the current and the previous one |
+| "change proxy", no other alive nodes | batch of candidates; if empty — emergency fetch |
+| pool < target after switching | one pool-batch (does not change the active node) |
+| window closed | stop worker -> `mewnet_close` -> port released |
 
-## Почему это не ест лишнюю сеть
+## Why it does not waste network
 
-- Health-check — лёгкий запрос к `generate_204` (или локальному URL).
-- Живые узлы не тестируются в discovery: только health-check.
-- Медленный режим — один кандидат раз в 24 с при полном pool.
-- Подписки — не чаще раза в час; новая подписка и аварийная ситуация —
-  исключения.
-- Пачки по 70 включаются только когда живых узлов нет или пользователь явно
-  просит новый прокси.
+- Health-check is a light request to `generate_204` (or a local URL).
+- Live nodes are not tested in discovery: only by health-check.
+- Slow mode is one candidate every 24 s when the pool is full.
+- Subscriptions: no more than once an hour; a new subscription and an emergency
+  are the exceptions.
+- Batches of 70 start only when there are no live nodes or the user explicitly
+  asks for a new proxy.
 
-## Память
+## Memory
 
-- UI держит одну страницу подписок (50 строк), а не весь список.
-- Agent использует SQL-счётчики и `ORDER BY ... LIMIT 1`, не загружая
-  миллионы строк.
-- Полные списки прокси и ссылки не загружаются в UI.
-- Лог ограничен 2000 строками, старые обрезаются.
-- SQLite page cache ограничен 4 МБ на соединение, `temp_store=FILE`, WAL auto-checkpoint.
-- Замер: 30 подписок и 12 638 прокси — GTK ~159 МБ RSS; 10 030 подписок —
-  ~159 МБ, то есть память не растёт с числом подписок.
-- Загрузка подписки идёт во временный файл, а транзакция SQLite начинается
-  только после скачивания: долгий источник не блокирует health-check и
-  запись результатов.
+- The UI holds one page of subscriptions (50 rows), not the whole list.
+- The agent uses SQL counters and `ORDER BY ... LIMIT 1`, without loading
+  millions of rows.
+- Full proxy lists and links are not loaded into the UI.
+- The log is capped at 2000 lines; older ones are trimmed.
+- SQLite page cache is limited to 4 MB per connection, `temp_store=FILE`, WAL auto-checkpoint.
+- Measurement: 30 subscriptions and 12 638 proxies — GTK ~159 MB RSS; 10 030
+  subscriptions — ~159 MB, that is, memory does not grow with the number of subscriptions.
+- A subscription is downloaded to a temporary file, and the SQLite transaction
+  starts only after the download: a slow source does not block health-check or
+  writing results.
 
-## Наблюдаемость
+## Observability
 
-В журнале и stdout есть стабильные события:
+The journal and stdout carry stable events:
 
 ```text
-SUBS n=...                 число подписок
-FETCH ...                  результат обновления подписки
+SUBS n=...                 number of subscriptions
+FETCH ...                  subscription refresh result
 BATCH reason=fast|switch|pool tested=... alive=...
-ACTIVE id=... name=...     выбранный узел
-READY local=http://...     локальный прокси готов
-HEALTH FAIL try=1/2        активный не ответил
-DISCOVERED id=...          новый живой узел добавлен в пул
-SWITCH requested           пользователь нажал кнопку
-TEST ...                   проверка кандидата
-WAIT no subscriptions ...  ожидание источников
+ACTIVE id=... name=...     selected node
+READY local=http://...     local proxy is ready
+HEALTH FAIL try=1/2        the active node did not respond
+DISCOVERED id=...          a new live node was added to the pool
+SWITCH requested           the user pressed the button
+TEST ...                   candidate check
+WAIT no subscriptions ...  waiting for sources
 ```
 
-## Автоматическая проверка
+## Automated verification
 
-### 1. Обычный набор
+### 1. Regular suite
 
 ```bash
 make test
 ```
 
-Покрывает Go-ядро, C ABI, SQLite/rating, e2e с локальным Xray.
+Covers the Go core, the C ABI, SQLite/rating, and e2e with a local Xray.
 
-### 2. Отказоустойчивость agent
+### 2. Agent fault tolerance
 
 ```bash
 make test-agent
 ```
 
-Тест полностью офлайновый: поднимает локальный HTTP-origin `204` и несколько
-локальных HTTP-прокси, отдаёт их как подписку и запускает CLI в `--headless`
-режиме. Проверяются 19 утверждений:
+The test is fully offline: it brings up a local HTTP origin `204` and several
+local HTTP proxies, serves them as a subscription, and runs the CLI in
+`--headless` mode. It checks 19 assertions:
 
-- bootstrap: `READY`, локальный порт, трафик `204`;
-- пул вырос минимум до 2 живых;
-- SIGUSR1 (кнопка «сменить прокси») переключает на другой узел, трафик
-  продолжает работать;
-- несколько переключений подряд выбирают как минимум 3 разных лучших узла,
-  а не два;
-- активный узел определяется по логу;
-- остановка активного прокси даёт `HEALTH FAIL` и автоматический failover;
-- трафик после failover работает;
-- остановка всех прокси включает `BATCH reason=fast`, процесс остаётся жив;
-- новый рабочий узел в подписке обнаруживается и активируется, трафик снова
-  работает;
-- пустая база ждёт подписку (`WAIT no subscriptions`);
-- внешняя вставка подписки подхватывается, происходит `READY`, трафик
-  работает.
+- bootstrap: `READY`, local port, `204` traffic;
+- the pool grew to at least 2 live nodes;
+- SIGUSR1 (the "change proxy" button) switches to a different node, and traffic
+  keeps working;
+- several switches in a row select at least 3 different best nodes,
+  not two;
+- the active node is identified from the log;
+- stopping the active proxy produces `HEALTH FAIL` and an automatic failover;
+- traffic works after the failover;
+- stopping all proxies triggers `BATCH reason=fast`, and the process stays alive;
+- a new working node in the subscription is discovered and activated, and traffic
+  works again;
+- an empty database waits for a subscription (`WAIT no subscriptions`);
+- an external insertion of a subscription is picked up, `READY` happens, and traffic
+  works.
 
 ### 3. UI smoke
 
@@ -177,24 +177,24 @@ make test-agent
 ./build/apps/mewnet-gtk/mewnet-gtk --db /tmp/ui.db --screenshot /tmp/ui.png
 ```
 
-Приложение строит окно, снимает PNG и выходит. Проверяется, что UI
-собирается, отрисовывается и корректно завершается без ручного клика.
+The application builds the window, captures a PNG, and exits. This checks that the UI
+builds, renders, and shuts down cleanly without a manual click.
 
-## Дедупликация
+## Deduplication
 
-Для каждого прокси считается identity = SHA-256 от протокола, хоста, порта и
-учётных данных (UUID/пароль/method+password). Имя, `#fragment` и транспортные
-опции не влияют. В таблице `proxies` есть уникальный индекс
-`(group_id, identity_hash)`. При открытии старой базы identityHash
-достраивается пакетами по 200 строк, дубликаты сливаются, их источники
-переносятся на оставшуюся запись.
+For each proxy an identity is computed as SHA-256 of the protocol, host, port, and
+credentials (UUID/password/method+password). The name, `#fragment`, and transport
+options do not affect it. The `proxies` table has a unique index on
+`(group_id, identity_hash)`. When an old database is opened, identityHash
+is backfilled in batches of 200 rows, duplicates are merged, and their sources
+are moved to the surviving record.
 
-## Ручная проверка
+## Manual check
 
 ```bash
 make gtk
 curl -x http://127.0.0.1:<port> https://lua.org
 ```
 
-Порт показан в верхней панели. Кнопка **Change proxy** переключает на
-следующий живой узел; при нехватке пула запускается добор кандидатов.
+The port is shown in the top bar. The **Change proxy** button switches to the
+next live node; when the pool is short, additional candidates are fetched.

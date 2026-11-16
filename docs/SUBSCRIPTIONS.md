@@ -1,16 +1,16 @@
-# Подписки в `libmewnet`
+# Subscriptions in `libmewnet`
 
-C-часть подписок, SQLite и discovery-agent входят в единую `libmewnet`:
+The C part of subscriptions, SQLite and the discovery agent ship in a single `libmewnet`:
 
-- качает подписку потоково, не загружая тело целиком в память;
-- поддерживает plain text и base64 (стандартный и URL-safe);
-- парсит `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, ...
-- пишет конфиги, рейтинг и историю тестов в SQLite;
-- удаляет устаревшие конфиги через generation-механизм;
-- проверяет конфиги через `mewnet_test_link_info`;
-- соблюдает общий лимит запросов.
+- downloads a subscription as a stream, without loading the whole body into memory;
+- supports plain text and base64 (standard and URL-safe);
+- parses `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, ...
+- writes configs, rating and test history to SQLite;
+- deletes stale configs via the generation mechanism;
+- checks configs via `mewnet_test_link_info`;
+- respects the shared request limit.
 
-## Сборка
+## Build
 
 ```bash
 make deps          # mise install: go, odin, android-sdk, clang, cmake
@@ -19,11 +19,11 @@ make subs          # dist/libmewnet.so + build/apps/mewnet-subs/mewnet-subs
 make test-subs     # ctest
 ```
 
-CMake использует:
+CMake uses:
 
-- `mewnet` из `dist/libmewnet.so`;
-- SQLite amalgamation внутри `libs/mewnet/cmd/mewnet` (public domain);
-- clang из mise.
+- `mewnet` from `dist/libmewnet.so`;
+- the SQLite amalgamation inside `libs/mewnet/cmd/mewnet` (public domain);
+- clang from mise.
 
 ## CLI
 
@@ -45,14 +45,14 @@ CMake использует:
 ./build/apps/mewnet-subs/mewnet-subs --db data/subs.db stats
 ```
 
-`run` — основной цикл:
+`run` — the main loop:
 
-1. если есть due-подписка — качает следующую по времени/ошибкам;
-2. иначе тестирует следующего кандидата;
-3. каждый внешний запрос проходит через общий rate limiter;
-4. результат теста и рейтинг пишутся в SQLite.
+1. if there is a due subscription, download the next one by time/failures;
+2. otherwise test the next candidate;
+3. every external request goes through the shared rate limiter;
+4. the test result and rating are written to SQLite.
 
-## Seed-подписки
+## Seed subscriptions
 
 `subscriptions/seed.txt`:
 
@@ -62,22 +62,22 @@ CMake использует:
 80  https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
 ```
 
-Загрузить seed в БД:
+Load the seed into the DB:
 
 ```bash
 ./subscriptions/seed.sh data/subs.db
 ```
 
-Проверенные вручную:
+Verified manually:
 
-- большой base64-поток ~2.9 MB;
-- plain text с `#`-метаданными;
-- маленькая base64-подписка.
+- a large base64 stream ~2.9 MB;
+- plain text with `#` metadata;
+- a small base64 subscription.
 
-Публичные подписки недоверенные: конфиги могут быть кривыми или вредоносными.
-Тестер лучше запускать отдельным процессом.
+Public subscriptions are untrusted: configs may be malformed or malicious.
+Run the tester as a separate process where possible.
 
-## Форматы
+## Formats
 
 Plain:
 
@@ -92,28 +92,28 @@ vmess://...
 Base64:
 
 ```text
-<base64 от того же текста, можно с переносами и без padding>
+<base64 of the same text, may contain line breaks and omit padding>
 ```
 
-По первым 512 байтам определяется режим:
+The mode is detected from the first 512 bytes:
 
-- `#` или `://` → plain;
-- только base64-алфавит → base64.
+- `#` or `://` → plain;
+- base64 alphabet only → base64.
 
-Поддерживаются BOM, CRLF, пробелы, `+`/`-`, `/`/`_`, `=` и отсутствие `=`.
+BOM, CRLF, spaces, `+`/`-`, `/`/`_`, `=` and a missing `=` are supported.
 
-## Группы подписок
+## Subscription groups
 
-Подписки объединяются в группы. При первом открытии БД создаётся группа
-`All`, и все новые подписки попадают в неё. Это и есть одна большая группа
-со всеми подписками.
+Subscriptions are combined into groups. On the first open of the DB a group
+`All` is created, and every new subscription goes into it. That is the single
+large group holding all subscriptions.
 
 ```c
 mewnet_subs_group_list groups = mewnet_subs_load_groups(db);
 mewnet_subs_add_subscription_in_group(db, group_id, url, priority, name);
 ```
 
-Для GUI/CLI доступны:
+Available for GUI/CLI:
 
 ```bash
 mewnet-subs --db data/subs.db groups
@@ -122,18 +122,19 @@ mewnet-subs --db data/subs.db group rm ID
 mewnet-subs --db data/subs.db sub add URL 100 name
 ```
 
-## Дедупликация конфигов
+## Config deduplication
 
-Конфиги дедуплицируются в пределах группы по `SHA-256` от полной ссылки
-**без фрагмента `#name`**.
+Configs are deduplicated within a group by `SHA-256` of the full link
+**without the `#name` fragment**.
 
-- одинаковый конфиг из двух подписок одной группы = одна запись `proxies`;
-- одинаковый конфиг с разными `#name` = одна запись;
-- изменение пароля/UUID/транспорта = другая ссылка = новая запись;
-- дедупликации по host:port нет.
+- the same config from two subscriptions of one group = one `proxies` row;
+- the same config with different `#name` = one row;
+- a changed password/UUID/transport = a different link = a new row;
+- there is no deduplication by host:port.
 
-Связь «конфиг ↔ подписки» хранится в `proxy_sources`. Если конфиг есть в
-нескольких подписках, он остаётся, пока есть хотя бы один источник.
+The config ↔ subscription relation is stored in `proxy_sources`. If a config is
+present in several subscriptions, it stays as long as at least one source
+exists.
 
 ## SQLite
 
@@ -166,26 +167,25 @@ test_events(
 )
 ```
 
-Включены WAL, `busy_timeout`, `foreign_keys`, `ON DELETE CASCADE`.
+WAL, `busy_timeout`, `foreign_keys` and `ON DELETE CASCADE` are enabled.
 
-## Рейтинг
+## Rating
 
-При успехе:
+On success:
 
-- `rating += 1`, но не чаще одного раза в UTC-сутки;
+- `rating += 1`, but at most once per UTC day;
 - `last_up_day = YYYYMMDD`.
 
-При ошибке:
+On failure:
 
-- `rating -= 1`, но не чаще одного раза в сутки;
+- `rating -= 1`, but at most once per day;
 - `last_down_day = YYYYMMDD`.
 
-Ограничения независимые: за день можно получить и `+1`, и `-1`.
+The limits are independent: in one day a proxy can get both `+1` and `-1`.
 
-## Выбор кандидата
+## Candidate selection
 
-Кандидаты выбираются **случайно, с весами** по приоритету группы, приоритету
-подписки-источника и рейтингу прокси:
+Candidates are selected **randomly, weighted by proxy rating**:
 
 ```text
 weight = 1 + max(0, rating + 10)
@@ -194,32 +194,32 @@ key = random_uniform ^ (1 / weight)
 ORDER BY key DESC
 ```
 
-То есть высокорейтинговые прокси выпадают чаще, но порядок не фиксированный:
-одинаковые по весу конфиги перемешиваются. Приоритеты групп/подписок больше
-не участвуют.
-Это используется и в batch-discovery, и в обычном `mewnet_subs_test_next`.
+That is, higher-rated proxies come up more often, but the order is not fixed:
+configs of equal weight are interleaved. Group and subscription priorities do
+not participate.
+This is used both in batch discovery and in regular `mewnet_subs_test_next`.
 
-В быстрой пачке сначала идут непроверенные (`last_tested_at IS NULL`), затем
-мёртвые (`alive=0`). Поэтому когда живых нет, приложение не застревает на
-«непроверенных не осталось»: мёртвые перепроверяются, а следующая подписка
-скачивается аварийно.
+In a fast batch untested entries come first (`last_tested_at IS NULL`), then
+dead ones (`alive=0`). So when no live nodes remain, the app does not get stuck
+on "no untested left": dead ones are re-tested and the next subscription is
+fetched on an emergency basis.
 
 ## Rate limit
 
-По умолчанию:
+By default:
 
-- 10 запросов;
-- окно 240 секунд;
-- интервал ~24 секунды с jitter.
+- 10 requests;
+- a 240 second window;
+- an interval of ~24 seconds with jitter.
 
-Лимит общий для fetch и test. Настраивается:
+The limit is shared between fetch and test. Configured with:
 
 ```bash
 --limit 10 --window 240
---limit 0          # отключить (для отладки)
+--limit 0          # disable (for debugging)
 ```
 
-## Потоковый ingest
+## Streaming ingest
 
 ```text
 mewnet_http_stream
@@ -231,13 +231,13 @@ mewnet_http_stream
   → DELETE stale by generation
 ```
 
-Память ограничена:
+Memory is bounded:
 
-- sniff: 512 байт;
-- строка: 16 KiB;
+- sniff: 512 bytes;
+- line: 16 KiB;
 - SQLite page cache.
 
-Тело подписки и список всех ссылок в памяти не держатся.
+The subscription body and the full list of links are never held in memory.
 
 ## Discovery CLI: `mewnet-watch`
 
@@ -247,43 +247,43 @@ mewnet_http_stream
   https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
 ```
 
-Поведение:
+Behavior:
 
-- создаёт SQLite;
-- добавляет подписки в `All`;
-- пока нет alive-узла, тестирует непроверенные конфиги пачками по 70
-  одновременно;
-- при нахождении alive добавляет его в `MILIB`, выбирает и печатает
+- creates SQLite;
+- adds subscriptions to `All`;
+- while there is no alive node, tests untested configs in batches of 70
+  concurrently;
+- on finding an alive node, adds it to `MILIB`, selects it and prints
   `PROXY http://127.0.0.1:<port>` + `READY`;
-- дальше discovery идёт через стандартный rate limiter;
-- обновляет максимум одну подписку в час; если непроверенных узлов нет и
-  рабочих нет — обновляет следующую немедленно.
+- after that discovery goes through the standard rate limiter;
+- updates at most one subscription per hour; if there are no untested nodes and
+  no working ones, it updates the next one immediately.
 
-Библиотечные API для этого:
+Library APIs for this:
 
 - `mewnet_test_links_batch` / `mewnet_test_links_batch_first` /
-  `mewnet_unload_batch_test` в `libmewnet`;
-- `mewnet_subs_test_batch` — выбрать непроверенные, проверить пачкой,
-  остановиться на первом alive (остальные проверки отменяются), записать
-  результаты и вернуть первый alive;
+  `mewnet_unload_batch_test` in `libmewnet`;
+- `mewnet_subs_test_batch` — select untested entries, test them as a batch,
+  stop at the first alive one (the remaining checks are cancelled), write the
+  results and return the first alive one;
 - `mewnet_subs_count_untested`, `mewnet_subs_count_alive`,
   `mewnet_subs_first_alive`;
-- `mewnet_subs_next_alive` — следующий живой узел для кнопки «сменить
-  прокси»;
-- `mewnet_subs_fetch_now` — fetch без ожидания rate limiter для аварийного
-  обновления;
-- `mewnet_subs_test_next_now` — тест без блокирующего rate limiter; pacing
-  задаёт вызывающая сторона;
-- `mewnet_subs_test_candidate_now(... scope)` — выбрать кандидата в заданной
-  области: `ANY`, `UNTESTED` или `NOT_ALIVE`; используется агентом, чтобы не
-  перепроверять живые узлы и растить пул;
+- `mewnet_subs_next_alive` — the next live node for the "change proxy"
+  button;
+- `mewnet_subs_fetch_now` — fetch without waiting for the rate limiter, for
+  emergency updates;
+- `mewnet_subs_test_next_now` — a test without the blocking rate limiter;
+  pacing is set by the caller;
+- `mewnet_subs_test_candidate_now(... scope)` — select a candidate in the given
+  scope: `ANY`, `UNTESTED` or `NOT_ALIVE`; used by the agent so it does not
+  re-test live nodes and grows the pool;
 - `mewnet_subs_load_subscriptions_page`, `mewnet_subs_count_subscriptions`,
-  `mewnet_subs_max_last_fetch`, `mewnet_subs_next_subscription_id` — работа с
-  подписками без загрузки всей таблицы;
-- `mewnet_subs_random_best_alive` — случайный из лучших живых;
+  `mewnet_subs_max_last_fetch`, `mewnet_subs_next_subscription_id` — working
+  with subscriptions without loading the whole table;
+- `mewnet_subs_random_best_alive` — a random one of the best live nodes;
 - `mewnet_agent_start` / `stop` / `request_switch` /
-  `request_subscription` / `get_snapshot` — общий discovery-агент для GTK и
-  CLI/TUI.
+  `request_subscription` / `get_snapshot` — a shared discovery agent for GTK
+  and CLI/TUI.
 
 ## GTK4 control panel: `mewnet-gtk`
 
@@ -293,27 +293,30 @@ make gtk
   https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
 ```
 
-Окно на C + GTK4:
+Window in C + GTK4:
 
-- постраничный список подписок, добавление и удаление;
-- кнопка «Сменить прокси» — случайный узел из лучших alive (рейтинг,
-  задержка), кроме текущего и предыдущего;
-- дополнительно CLI/TUI `apps/mewnet-cli` с тем же агентом;
-- текущий прокси: имя, протокол, адрес, задержка;
-- журнал `FETCH` / `BATCH` / `ACTIVE` / `TEST` / `SWITCH`;
-- строка с адресом локального mixed-прокси;
-- при закрытии окна discovery и прокси останавливаются.
+- a paged subscription list, add and remove;
+- a "Change proxy" button — a random node from the best alive ones (rating,
+  delay), excluding the current and the previous one;
+- additionally a CLI/TUI `apps/mewnet-cli` with the same agent;
+- current proxy: name, protocol, address, delay;
+- log of `FETCH` / `BATCH` / `ACTIVE` / `TEST` / `SWITCH`;
+- a line with the address of the local mixed proxy;
+- closing the window stops discovery and the proxy.
 
-Пока alive-узла нет, GUI проверяет пачки по 70 и останавливается на первом
-рабочем. После активации:
+While there is no alive node, the GUI tests batches of 70 and stops at the first
+working one. After activation:
 
-- health-check активного узла каждые 6 секунд; два отказа из последних трёх — failover;
-- discovery не трогает живые узлы, проверяет непроверенные, затем мёртвые;
-- при пуле меньше 4 живых шаг discovery 2 секунды, при полном — 24 секунды;
-- подписки обновляются не чаще раза в час; новая подписка скачивается сразу;
-- если живых не осталось, снова включаются пачки по 70 и аварийный fetch.
+- a health-check of the active node every 6 seconds; two failures out of the
+  last three trigger failover;
+- discovery does not touch live nodes, it tests untested ones, then dead ones;
+- with fewer than 4 live nodes the discovery step is 2 seconds, with a full
+  pool 24 seconds;
+- subscriptions are updated at most once per hour; a new subscription is
+  downloaded immediately;
+- if no live nodes remain, batches of 70 and emergency fetch are enabled again.
 
-Полная спецификация — в [`docs/GTK_RELIABILITY.md`](GTK_RELIABILITY.md).
+Full specification in [`docs/GTK_RELIABILITY.md`](GTK_RELIABILITY.md).
 
 ## C API
 
@@ -325,22 +328,22 @@ mewnet_subs_open_result opened = mewnet_subs_open(&cfg);
 mewnet_error err = mewnet_subs_add_subscription(opened.db, url, 0, "name");
 mewnet_subs_fetch_result fetched = mewnet_subs_fetch_due(opened.db);
 
-mewnet_instance* m = ...; /* mewnet_init с mixed_port = -1 */
+mewnet_instance* m = ...; /* mewnet_init with mixed_port = -1 */
 mewnet_subs_test_result tested = mewnet_subs_test_next(opened.db, m);
 
 mewnet_subs_close(opened.db);
 ```
 
-Для GUI добавлены:
+Added for the GUI:
 
-- `mewnet_subs_load_proxy_summaries` — страница без полной `link`;
-- `mewnet_subs_get_proxy` — одна полная запись по id;
-- `mewnet_subs_add_proxy` — ручной прокси (`manual = 1`);
+- `mewnet_subs_load_proxy_summaries` — a page without the full `link`;
+- `mewnet_subs_get_proxy` — one full record by id;
+- `mewnet_subs_add_proxy` — a manual proxy (`manual = 1`);
 - `mewnet_subs_remove_proxy`;
 - `mewnet_subs_count_proxies`.
 
-Ручные прокси не удаляются generation-cleanup, если их нет в подписке:
-`DELETE ... AND manual = 0`. Если ссылка снова появляется в подписке, она
-становится управляемой (`manual = 0`).
+Manual proxies are not removed by generation cleanup when they are absent from
+a subscription: `DELETE ... AND manual = 0`. If the link appears in a
+subscription again, it becomes managed (`manual = 0`).
 
-Полный список — в `subscriptions/include/mewnet_subs.h`.
+The full list is in `subscriptions/include/mewnet_subs.h`.
