@@ -99,7 +99,8 @@ curl -x http://127.0.0.1:$PORT https://example.com
 
 Switching later is a hot swap: `mewnet_select_proxy(m, "other-node")`. New
 connections use the new node; connections that are already open stay on the old
-one until they close.
+one until they close. If the proxy came from `mewnet_link_create`, use
+`mewnet_link_select(link)` and skip the name lookup — see Path 2.
 
 ### Path 2 — per-link endpoint: traffic goes through one specific link
 
@@ -151,6 +152,9 @@ inbound; the link's port always keeps its own proxy.
 
 ## C: complete example, shared inbound
 
+This is the whole loop for "my app should send traffic through one proxy": create
+the link, hand the handle to `mewnet_link_select`, use the mixed port.
+
 ```c
 #include <stdio.h>
 #include "mewnet.h"
@@ -167,33 +171,57 @@ int main(void) {
     }
     mewnet_instance *m = init.instance;
 
-    mewnet_add_options add = mewnet_add_options_default();
-    add.select_proxy = true;
-    if (mewnet_add_proxy(m, "vless://...", &add) != MEWNET_ERROR_NONE) {
-        fprintf(stderr, "add failed, see the log callback\n");
+    /* A link is the proxy plus a handle for tests, selection and destroy. */
+    mewnet_link_options opts = mewnet_link_options_default();
+    opts.local_proxy = false;        /* the shared mixed port is enough here */
+
+    mewnet_link_result created = mewnet_link_create(m, "vless://...", &opts);
+    if (created.link == NULL) {
+        fprintf(stderr, "link: %s\n", created.error.message);
         mewnet_close(m);
         return 1;
     }
+    mewnet_link *link = created.link;
+
+    /* The handle selects the main proxy; no name lookup anywhere. */
+    if (mewnet_link_select(link) != MEWNET_ERROR_NONE) {
+        fprintf(stderr, "select failed, see the log callback\n");
+        mewnet_link_destroy(link);
+        mewnet_close(m);
+        return 1;
+    }
+
+    mewnet_link_info info = mewnet_link_get_info(link);
+    mewnet_status_info status = mewnet_get_status(m);
+    printf("proxy: http://127.0.0.1:%d\n", status.mixed_port);
+    printf("selected: %s (%s %s:%d)\n",
+           status.selected, info.proxy_type, info.server, info.port);
 
     mewnet_delay_options delay = mewnet_delay_options_default();
     delay.url = "https://www.gstatic.com/generate_204";
     delay.expected = "204";
     delay.timeout_ms = 5000;
 
-    mewnet_status_info status = mewnet_get_status(m);
-    printf("proxy: http://127.0.0.1:%d (selected: %s)\n",
-           status.mixed_port, status.selected);
-
-    mewnet_delay_result d = mewnet_test_delay(m, status.selected, &delay);
-    if (d.ok) {
-        printf("delay: %u ms\n", d.delay_ms);
+    mewnet_ping_result ping = mewnet_link_ping(link, &delay);
+    if (ping.ok) {
+        printf("delay: %u ms\n", ping.delay_ms);
     }
 
-    /* ... the app runs, traffic goes through http://127.0.0.1:<mixed_port> ... */
+    /* ... traffic goes through http://127.0.0.1:<mixed_port> ... */
 
+    mewnet_link_destroy(link);
     mewnet_close(m);
     return 0;
 }
+```
+
+If you have no need for link handles (testing, per-link SOCKS, selection by
+handle), a raw link plus `mewnet_add_proxy` does the same in one call:
+
+```c
+mewnet_add_options add = mewnet_add_options_default();
+add.select_proxy = true;
+mewnet_add_proxy(m, "vless://...", &add);
 ```
 
 Compile:
@@ -207,6 +235,9 @@ Buffer sizes, list ownership and the rest of the API are in
 [`docs/USAGE.md`](docs/USAGE.md) and the header comments.
 
 ## C: complete example, one link with its own SOCKS5
+
+No shared inbound and no selection here: the core starts without a mixed port
+and the link gets a dedicated authenticated endpoint.
 
 ```c
 #include <stdio.h>
