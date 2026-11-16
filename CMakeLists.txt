@@ -38,6 +38,7 @@ endif()
 
 add_subdirectory(apps/mewnet-subs)
 add_subdirectory(apps/mewnet-watch)
+add_subdirectory(apps/mewnet-discovery)
 if(NOT WIN32)
     add_subdirectory(apps/mewnet-cli)
 endif()

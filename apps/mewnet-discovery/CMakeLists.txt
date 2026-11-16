@@ -1,0 +1,5 @@
+add_executable(mewnet-discovery main.c)
+target_include_directories(mewnet-discovery PRIVATE "${MEWNET_PACKAGE_DIR}")
+target_link_libraries(mewnet-discovery PRIVATE "${MEWNET_LIBRARY}")
+target_compile_options(mewnet-discovery PRIVATE -Wall -Wextra)
+set_target_properties(mewnet-discovery PROPERTIES BUILD_RPATH "${MEWNET_ROOT}/dist")

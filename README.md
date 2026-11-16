@@ -741,7 +741,31 @@ node, watch the discovery log.
 **`mewnet-gui`** — a small Odin/raylib GUI for browsing groups and paging
 through proxies (`make gui`).
 
-All four use the same library and the same agent, so the behaviour matches.
+**`mewnet-discovery`** — a probe for the discovery pipeline itself. It fetches
+subscriptions and grows the pool in three stages: wide batches until the first
+`--fast` nodes work, smaller paced batches up to `--bulk`, then a slow
+background trickle. It reports time to the first node, time per stage, success
+rate, protocol mix, delay percentiles, and finally routes traffic through the
+best node to prove it works:
+
+```bash
+make subs
+./build/apps/mewnet-discovery/mewnet-discovery --db data/discovery.db \
+  --fast 8 --bulk 100 --run-seconds 300 \
+  https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt \
+  https://raw.githubusercontent.com/barry-far/V2ray-Config/main/All_Configs_Sub.txt
+```
+
+```text
+== stage 1 done: 5 alive in 7.9 s (first node after 1.9 s)
+== stage 2: grow to 100 proxies (batch 24, concurrency 12, pause 500 ms)
+...
+verify through      : GB-node -> HTTP 204 in 670 ms
+```
+
+Details and every flag: [`apps/mewnet-discovery/README.md`](apps/mewnet-discovery/README.md).
+
+All of them use the same library and the same agent, so the behaviour matches.
 Policy (health checks every 6 s, failover after 2 failures out of 3, pool of 12,
 random switch among the best): [`docs/GTK_RELIABILITY.md`](docs/GTK_RELIABILITY.md).
 
@@ -788,6 +812,7 @@ apps/gui/                 Odin + raylib GUI
 apps/mewnet-gtk/          C + GTK4 control panel
 apps/mewnet-cli/          C CLI/TUI agent
 apps/mewnet-watch/        C discovery tool
+apps/mewnet-discovery/    C staged discovery probe (timings, success rate)
 tests/                    C, Python and e2e tests
 docs/                     usage, building, testing, design notes
 ```

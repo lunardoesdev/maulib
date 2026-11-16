@@ -19,7 +19,7 @@ export CGO_ENABLED = 1
 
 LDFLAGS = -s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33
 
-.PHONY: all deps build build-mingw-core subs subs-mingw gui gtk cli watch test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links test-gtk-agent clean xray
+.PHONY: all deps build build-mingw-core subs subs-mingw gui gtk cli watch discovery test test-subs test-e2e-subs test-unit test-links test-stress test-c test-c-ping test-c-ping-local test-e2e test-e2e-links test-gtk-agent clean xray
 
 all: build
 
@@ -72,6 +72,14 @@ WATCH_SUBS ?= https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
 
 watch: subs
 	./build/apps/mewnet-watch/mewnet-watch --db $(WATCH_DB) --proxy-port 18085 $(WATCH_SUBS)
+
+# Staged discovery probe: first N nodes fast, then the first hundred, then a
+# slow background pass. Built by `make subs` together with the other clients.
+DISCOVERY_DB ?= data/discovery.db
+
+discovery: subs
+	./build/apps/mewnet-discovery/mewnet-discovery --db $(DISCOVERY_DB) \
+		--fast 8 --bulk 100 --run-seconds 120 $(WATCH_SUBS)
 
 GTK_DB ?= data/mewnet-gtk.db
 
