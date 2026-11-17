@@ -478,7 +478,10 @@ For a single step instead of a batch, use `mewnet_subs_test_next` (waits for the
 rate limiter) or `mewnet_subs_test_next_now` (does not). `mewnet_subs_test_proxy`
 tests one known id, and `mewnet_subs_record_test` stores a result you measured
 elsewhere. Health is separate: `mewnet_subs_record_health` orders candidates but
-never flips `alive`.
+never flips `alive`; `mewnet_subs_record_health_delay` does the same and also
+refreshes `last_delay_ms` with the latency you measured, so the active node can
+be compared with the pool. `mewnet_subs_median_delay` returns that pool baseline
+(median latency of the best alive nodes, excluding one id).
 
 ### Paging through stored configs
 
@@ -659,8 +662,9 @@ Function families, if you need to look something up quickly: storage
 `load_proxy_summaries`, `get_proxy`, `add_proxy`, `remove_proxy`,
 `count_proxies`), fetching (`fetch`, `fetch_now`, `fetch_due`, `cancel_fetch`),
 testing (`test_batch`, `test_next`, `test_next_now`, `test_candidate_now`,
-`test_proxy`, `record_test`, `record_health`), selection (`first_alive`,
-`next_alive`, `random_best_alive`), limiter (`rate_limit_wait`), agent
+`test_proxy`, `record_test`, `record_health`, `record_health_delay`), selection
+(`first_alive`, `next_alive`, `random_best_alive`, `median_delay`), limiter
+(`rate_limit_wait`), agent
 (`agent_config_default`, `agent_start`, `agent_stop`, `agent_request_switch`,
 `agent_request_subscription`, `agent_get_snapshot`).
 

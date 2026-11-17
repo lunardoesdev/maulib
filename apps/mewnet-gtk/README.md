@@ -65,6 +65,10 @@ Full specification and failure matrix:
 --health-expected CODE expected health status (default 200)
 --test-url URL         discovery test URL (default gstatic 204)
 --test-expected CODE   discovery expected status (default 204)
+--slow-factor N        switch when the active is N x the pool median (default 3, 0 = off)
+--slow-floor MS        ... and slower than this absolute latency (default 1000)
+--slow-checks N        consecutive slow health checks before switching (default 3)
+--slow-cooldown S      minimum gap between slowness switches (default 600)
 --screenshot PATH      render the window to PNG and exit (UI smoke test)
 ```
 

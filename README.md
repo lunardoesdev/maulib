@@ -164,6 +164,10 @@ are a lower-level feature, see [`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.
 | `int pool_target` | `12` | working links the agent keeps |
 | `size_t batch` | `70` | configs per discovery batch |
 | `size_t concurrency` | `70` | parallel checks in a batch |
+| `int slow_factor` | `3` | replace the active link when it is this many times the pool median; `-1` disables |
+| `int slow_floor_ms` | `1000` | ... and above this absolute latency |
+| `int slow_checks` | `3` | consecutive slow health checks before switching |
+| `int slow_cooldown_sec` | `600` | minimum gap between slowness-driven switches |
 | `bool run_agent` | `false` | start the agent with the core (needs an inbound) |
 
 ### Lifecycle

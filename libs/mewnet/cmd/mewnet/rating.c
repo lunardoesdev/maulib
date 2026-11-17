@@ -341,6 +341,11 @@ mewnet_subs_test_result mewnet_subs_test_candidate_now(mewnet_subs* db, mewnet_i
 }
 
 mewnet_error mewnet_subs_record_health(mewnet_subs* db, int64_t proxy_id, bool ok) {
+    return mewnet_subs_record_health_delay(db, proxy_id, ok, 0);
+}
+
+mewnet_error mewnet_subs_record_health_delay(mewnet_subs* db, int64_t proxy_id, bool ok,
+                                             unsigned delay_ms) {
     if (db == NULL) {
         return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db is required");
     }
@@ -349,11 +354,15 @@ mewnet_error mewnet_subs_record_health(mewnet_subs* db, int64_t proxy_id, bool o
     subs_clear_error(&err);
     if (subs_db_prepare(db->db, &stmt,
                         "UPDATE proxies SET health_failures=CASE WHEN ? THEN 0"
-                        " ELSE health_failures+1 END WHERE id=?", &err) != 0) {
+                        " ELSE health_failures+1 END,"
+                        " last_delay_ms=CASE WHEN ? THEN ? ELSE last_delay_ms END"
+                        " WHERE id=?", &err) != 0) {
         return err;
     }
     sqlite3_bind_int(stmt, 1, ok ? 1 : 0);
-    sqlite3_bind_int64(stmt, 2, proxy_id);
+    sqlite3_bind_int(stmt, 2, (ok && delay_ms > 0) ? 1 : 0);
+    sqlite3_bind_int64(stmt, 3, (int64_t)delay_ms);
+    sqlite3_bind_int64(stmt, 4, proxy_id);
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) {

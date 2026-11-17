@@ -87,6 +87,32 @@ int main(void) {
           next.id == temp_id, "next alive after current");
     check(mewnet_subs_next_alive(db, group_id, temp_id, &next).code == MEWNET_ERROR_NONE &&
           next.id == proxy_id, "next alive wraps");
+
+    /* Pool latency baseline: the agent compares the active proxy with the
+     * median of the others, so both the median and the health delay must be
+     * readable. proxy has 42 ms, temp has 55 ms. */
+    unsigned median_ms = 0;
+    size_t samples = 0;
+    check(mewnet_subs_median_delay(db, group_id, 0, 5, &median_ms, &samples).code == MEWNET_ERROR_NONE &&
+          samples == 2 && median_ms == 48, "median delay of pool");
+    check(mewnet_subs_median_delay(db, group_id, temp_id, 5, &median_ms, &samples).code == MEWNET_ERROR_NONE &&
+          samples == 1 && median_ms == 42, "median delay excludes active");
+    check(mewnet_subs_median_delay(db, group_id, 0, 1, &median_ms, &samples).code == MEWNET_ERROR_NONE &&
+          samples == 1 && median_ms == 42, "median delay honours the window");
+    check(mewnet_subs_record_health_delay(db, temp_id, true, 77).code == MEWNET_ERROR_NONE,
+          "record health delay");
+    check(mewnet_subs_median_delay(db, group_id, 0, 5, &median_ms, &samples).code == MEWNET_ERROR_NONE &&
+          samples == 2 && median_ms == 59, "median sees the health delay");
+    check(mewnet_subs_record_health_delay(db, temp_id, false, 0).code == MEWNET_ERROR_NONE,
+          "record health failure");
+    char health_sql[160];
+    snprintf(health_sql, sizeof(health_sql),
+             "SELECT health_failures FROM proxies WHERE id=%d", temp_id);
+    int health_failures = query_int(raw, health_sql);
+    snprintf(health_sql, sizeof(health_sql),
+             "SELECT last_delay_ms FROM proxies WHERE id=%d", temp_id);
+    int temp_delay = query_int(raw, health_sql);
+    check(health_failures == 1 && temp_delay == 77, "health failure keeps the last delay");
     mewnet_subs_proxy picked;
     check(mewnet_subs_random_best_alive(db, group_id, 0, 0, 5, &picked).code == MEWNET_ERROR_NONE &&
           (picked.id == proxy_id || picked.id == temp_id), "random best any");
@@ -97,6 +123,8 @@ int main(void) {
     check(mewnet_subs_random_best_alive(db, group_id, proxy_id, temp_id, 5, &picked).code == MEWNET_ERROR_NOT_FOUND,
           "random best excludes both");
     check(mewnet_subs_remove_proxy(db, temp_id).code == MEWNET_ERROR_NONE, "remove temp");
+    check(mewnet_subs_median_delay(db, group_id, proxy_id, 5, &median_ms, &samples).code ==
+              MEWNET_ERROR_NOT_FOUND && samples == 0, "median without a pool");
     r = mewnet_subs_record_test(db, proxy_id, true, 43, "");
     check(r.error.code == MEWNET_ERROR_NONE && r.rating_delta == 0 && r.rating_after == 1, "rating +1 daily cap");
     r = mewnet_subs_record_test(db, proxy_id, false, 0, "boom");

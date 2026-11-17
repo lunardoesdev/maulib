@@ -40,6 +40,10 @@ typedef struct Options {
     char* health_expected;
     char* test_url;
     char* test_expected;
+    int slow_factor;
+    int slow_floor_ms;
+    int slow_checks;
+    int slow_cooldown_sec;
     char* screenshot_path;
     GPtrArray* urls;
 } Options;
@@ -837,6 +841,10 @@ static void on_activate(GtkApplication* gtk_app, gpointer user) {
     agent_config.health_timeout_ms = app->options.health_timeout_ms;
     agent_config.health_url = app->options.health_url;
     agent_config.health_expected = app->options.health_expected;
+    agent_config.slow_factor = app->options.slow_factor;
+    agent_config.slow_floor_ms = app->options.slow_floor_ms;
+    agent_config.slow_checks = app->options.slow_checks;
+    agent_config.slow_cooldown_sec = app->options.slow_cooldown_sec;
     mewnet_agent_callbacks callbacks = {agent_log, agent_state, app};
     app->agent = mewnet_agent_start(&agent_config, callbacks);
     if (app->agent == NULL) {
@@ -868,6 +876,10 @@ static void options_init(Options* options) {
     options->health_expected = g_strdup("200");
     options->test_url = g_strdup("https://www.gstatic.com/generate_204");
     options->test_expected = g_strdup("204");
+    options->slow_factor = 3;
+    options->slow_floor_ms = 1000;
+    options->slow_checks = 3;
+    options->slow_cooldown_sec = 600;
     options->urls = g_ptr_array_new_with_free_func(g_free);
 }
 
@@ -900,7 +912,8 @@ static bool parse_options(int argc, char** argv, Options* options, GError** erro
                     "  --db PATH --proxy-port N --batch N --concurrency N --timeout MS\n"
                     "  --fetch-interval S --slow-interval S --pool-target N\n"
                     "  --health-interval S --health-timeout MS --health-url URL\n"
-                    "  --test-url URL --test-expected CODE --screenshot PATH\n",
+                    "  --test-url URL --test-expected CODE --screenshot PATH\n"
+                    "  --slow-factor N --slow-floor MS --slow-checks N --slow-cooldown S\n",
                     argv[0]);
             exit(0);
         } else if (strcmp(arg, "--db") == 0 && take_value(argc, argv, &i, &value, error)) {
@@ -936,6 +949,14 @@ static bool parse_options(int argc, char** argv, Options* options, GError** erro
         } else if (strcmp(arg, "--test-expected") == 0 && take_value(argc, argv, &i, &value, error)) {
             g_free(options->test_expected);
             options->test_expected = g_strdup(value);
+        } else if (strcmp(arg, "--slow-factor") == 0 && take_value(argc, argv, &i, &value, error)) {
+            options->slow_factor = atoi(value);
+        } else if (strcmp(arg, "--slow-floor") == 0 && take_value(argc, argv, &i, &value, error)) {
+            options->slow_floor_ms = atoi(value);
+        } else if (strcmp(arg, "--slow-checks") == 0 && take_value(argc, argv, &i, &value, error)) {
+            options->slow_checks = atoi(value);
+        } else if (strcmp(arg, "--slow-cooldown") == 0 && take_value(argc, argv, &i, &value, error)) {
+            options->slow_cooldown_sec = atoi(value);
         } else if (strcmp(arg, "--screenshot") == 0 && take_value(argc, argv, &i, &value, error)) {
             g_free(options->screenshot_path);
             options->screenshot_path = g_strdup(value);
@@ -955,6 +976,10 @@ static bool parse_options(int argc, char** argv, Options* options, GError** erro
     if (options->pool_target <= 0) options->pool_target = 12;
     if (options->health_interval_sec <= 0) options->health_interval_sec = 6;
     if (options->health_timeout_ms <= 0) options->health_timeout_ms = 2500;
+    if (options->slow_factor < 0) options->slow_factor = 0;
+    if (options->slow_floor_ms <= 0) options->slow_floor_ms = 1000;
+    if (options->slow_checks <= 0) options->slow_checks = 3;
+    if (options->slow_cooldown_sec <= 0) options->slow_cooldown_sec = 600;
     return true;
 }
 

@@ -36,6 +36,9 @@ struct mewnet_agent {
     bool ready;
 
     unsigned health_history;
+    unsigned health_ewma;
+    int slow_streak;
+    int64_t last_slow_switch_ms;
     int64_t next_health_ms;
     int64_t next_discover_ms;
     int64_t last_pool_batch_ms;
@@ -72,6 +75,10 @@ mewnet_agent_config mewnet_agent_config_default(void) {
     config.health_timeout_ms = 2500;
     config.health_url = "https://lua.org";
     config.health_expected = "200";
+    config.slow_factor = 3;
+    config.slow_floor_ms = 1000;
+    config.slow_checks = 3;
+    config.slow_cooldown_sec = 600;
     return config;
 }
 
@@ -214,15 +221,21 @@ static void agent_emit_state(mewnet_agent* agent) {
     }
 }
 
-static bool agent_health_check(mewnet_agent* agent) {
+static bool agent_health_check(mewnet_agent* agent, unsigned* delay_ms) {
     char name[MEWNET_NAME_MAX];
     agent_copy_current(agent, NULL, name, sizeof(name), NULL, 0, NULL, 0, NULL, NULL, NULL);
+    if (delay_ms != NULL) {
+        *delay_ms = 0;
+    }
     if (name[0] == '\0') {
         return false;
     }
     int expected = atoi(agent->health_expected);
     mewnet_probe_result result = mewnet_probe(agent->cfg.milib, agent->health_url,
                                               expected, agent->cfg.health_timeout_ms);
+    if (result.ok && delay_ms != NULL) {
+        *delay_ms = (unsigned)result.delay_ms;
+    }
     return result.ok;
 }
 
@@ -237,6 +250,8 @@ static void agent_mark_current_dead(mewnet_agent* agent, const char* reason) {
     agent_log(agent, "HEALTH FAIL id=%lld name=%s (kept alive)",
               (long long)id, name[0] != '\0' ? name : "(unknown)");
     agent_clear_current(agent);
+    agent->health_ewma = 0;
+    agent->slow_streak = 0;
 }
 
 static bool agent_route(mewnet_agent* agent, const mewnet_subs_proxy* proxy) {
@@ -282,6 +297,8 @@ static bool agent_route(mewnet_agent* agent, const mewnet_subs_proxy* proxy) {
         agent_log(agent, "READY local=http://127.0.0.1:%d", agent->cfg.proxy_port);
     }
     agent->health_history = 0;
+    agent->health_ewma = 0;
+    agent->slow_streak = 0;
     agent_emit_state(agent);
     return true;
 }
@@ -354,10 +371,6 @@ static bool agent_switch_verified(mewnet_agent* agent) {
         mewnet_subs_proxy proxy;
         mewnet_error err = mewnet_subs_random_best_alive(
             agent->cfg.db, agent->cfg.group_id, exclude, 0, 5, &proxy);
-        if (err.code == MEWNET_ERROR_NOT_FOUND && exclude != 0) {
-            err = mewnet_subs_random_best_alive(
-                agent->cfg.db, agent->cfg.group_id, exclude, 0, 5, &proxy);
-        }
         if (err.code == MEWNET_ERROR_NOT_FOUND) {
             break;
         }
@@ -370,7 +383,7 @@ static bool agent_switch_verified(mewnet_agent* agent) {
             mewnet_subs_record_test(agent->cfg.db, proxy.id, false, 0, "route failed");
             continue;
         }
-        if (agent_health_check(agent)) {
+        if (agent_health_check(agent, NULL)) {
             if (current_id != 0) {
                 agent_log(agent, "SWITCH id=%lld name=%s", (long long)proxy.id,
                           proxy.name[0] != '\0' ? proxy.name : "(manual)");
@@ -418,7 +431,7 @@ static bool agent_switch_random(mewnet_agent* agent) {
             exclude = proxy.id;
             continue;
         }
-        if (agent_health_check(agent)) {
+        if (agent_health_check(agent, NULL)) {
             agent->last_switch_id = current_id;
             agent_log(agent, "SWITCH random id=%lld name=%s", (long long)proxy.id,
                       proxy.name[0] != '\0' ? proxy.name : "(manual)");
@@ -431,6 +444,52 @@ static bool agent_switch_random(mewnet_agent* agent) {
     }
     agent_log(agent, "SWITCH failed: no verified working proxy");
     return false;
+}
+
+/* The active proxy answers health checks but is far slower than the pool:
+ * a node that "works" but is 3x slower than its neighbours is a bad active
+ * choice even though it never fails. The EWMA keeps a single spike from
+ * triggering, the median gives a baseline, and the cooldown keeps a globally
+ * slow network from rotating the whole pool. */
+static bool agent_slow_confirmed(mewnet_agent* agent, unsigned ewma_ms) {
+    if (agent->cfg.slow_factor <= 0 || agent->cfg.slow_floor_ms <= 0 ||
+        agent->cfg.slow_checks <= 0) {
+        return false;
+    }
+    if (ewma_ms < (unsigned)agent->cfg.slow_floor_ms) {
+        agent->slow_streak = 0;
+        return false;
+    }
+    int64_t current_id = 0;
+    agent_copy_current(agent, &current_id, NULL, 0, NULL, 0, NULL, 0, NULL, NULL, NULL);
+    if (current_id == 0) {
+        return false;
+    }
+    unsigned median_ms = 0;
+    size_t samples = 0;
+    mewnet_error err = mewnet_subs_median_delay(agent->cfg.db, agent->cfg.group_id,
+                                                current_id, 5, &median_ms, &samples);
+    if (err.code != MEWNET_ERROR_NONE || samples < 2 || median_ms == 0) {
+        agent->slow_streak = 0;
+        return false;
+    }
+    if ((uint64_t)ewma_ms <= (uint64_t)median_ms * (uint64_t)agent->cfg.slow_factor) {
+        agent->slow_streak = 0;
+        return false;
+    }
+    if (agent->last_slow_switch_ms != 0 &&
+        subs_now_ms() - agent->last_slow_switch_ms <
+            (int64_t)agent->cfg.slow_cooldown_sec * 1000) {
+        return false;
+    }
+    agent->slow_streak++;
+    agent_log(agent, "SLOW try=%d/%d ewma=%ums pool_median=%ums samples=%zu",
+              agent->slow_streak, agent->cfg.slow_checks, ewma_ms, median_ms, samples);
+    if (agent->slow_streak < agent->cfg.slow_checks) {
+        return false;
+    }
+    agent->slow_streak = 0;
+    return true;
 }
 
 static void* agent_fetch_thread(void* data) {
@@ -649,7 +708,8 @@ static void* agent_thread_main(void* data) {
         }
 
         if (now >= agent->next_health_ms) {
-            bool healthy = agent_health_check(agent);
+            unsigned delay_ms = 0;
+            bool healthy = agent_health_check(agent, &delay_ms);
             agent->health_history = ((agent->health_history << 1) | (healthy ? 0u : 1u)) & 0x07u;
             unsigned recent_failures = 0;
             for (unsigned bits = agent->health_history; bits != 0; bits >>= 1) {
@@ -659,15 +719,36 @@ static void* agent_thread_main(void* data) {
                 int64_t current = 0;
                 agent_copy_current(agent, &current, NULL, 0, NULL, 0, NULL, 0, NULL, NULL, NULL);
                 if (current != 0) {
-                    mewnet_subs_record_health(agent->cfg.db, current, true);
+                    mewnet_subs_record_health_delay(agent->cfg.db, current, true, delay_ms);
+                }
+                if (delay_ms > 0) {
+                    /* EWMA with a 1/4 weight: a single spike must not count. */
+                    agent->health_ewma = agent->health_ewma == 0
+                                             ? delay_ms
+                                             : (agent->health_ewma * 3 + delay_ms) / 4;
+                    subs_mutex_lock(&agent->lock);
+                    agent->current_delay = delay_ms;
+                    subs_mutex_unlock(&agent->lock);
+                    if (agent_slow_confirmed(agent, agent->health_ewma)) {
+                        agent_log(agent, "SLOW switching id=%lld ewma=%ums",
+                                  (long long)current, agent->health_ewma);
+                        agent->last_slow_switch_ms = subs_now_ms();
+                        if (!agent_switch_verified(agent)) {
+                            agent_clear_current(agent);
+                        }
+                        agent->next_health_ms = subs_now_ms() + 1500;
+                        agent_emit_state(agent);
+                        continue;
+                    }
                 }
                 agent->next_health_ms = now + (int64_t)agent->cfg.health_interval_sec * 1000;
             } else {
                 int64_t current = 0;
                 agent_copy_current(agent, &current, NULL, 0, NULL, 0, NULL, 0, NULL, NULL, NULL);
                 if (current != 0) {
-                    mewnet_subs_record_health(agent->cfg.db, current, false);
+                    mewnet_subs_record_health_delay(agent->cfg.db, current, false, 0);
                 }
+                agent->slow_streak = 0;
                 agent_log(agent, "HEALTH FAIL recent=%u/3", recent_failures);
                 if (recent_failures >= 2) {
                     agent_mark_current_dead(agent, "health check failed");
@@ -733,6 +814,11 @@ mewnet_agent* mewnet_agent_start(const mewnet_agent_config* config,
                                         ? config->fetch_interval_sec : 3600;
     agent->cfg.slow_interval_sec = config->slow_interval_sec > 0
                                        ? config->slow_interval_sec : 24;
+    agent->cfg.slow_factor = config->slow_factor > 0 ? config->slow_factor : 0;
+    agent->cfg.slow_floor_ms = config->slow_floor_ms > 0 ? config->slow_floor_ms : 1000;
+    agent->cfg.slow_checks = config->slow_checks > 0 ? config->slow_checks : 3;
+    agent->cfg.slow_cooldown_sec = config->slow_cooldown_sec > 0
+                                       ? config->slow_cooldown_sec : 600;
     snprintf(agent->health_url, sizeof(agent->health_url), "%s",
              config->health_url != NULL ? config->health_url
                                         : "https://www.gstatic.com/generate_204");

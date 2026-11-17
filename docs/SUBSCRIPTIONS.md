@@ -330,6 +330,9 @@ working one. After activation:
 
 - a health-check of the active node every 6 seconds; two failures out of the
   last three trigger failover;
+- the same probe measures latency: a node that answers but stays 3x slower than
+  the pool median (and above 1 s) for three checks in a row is replaced by a
+  random verified one, at most once per 10 minutes;
 - discovery does not touch live nodes, it tests untested ones, then dead ones;
 - with fewer than 4 live nodes the discovery step is 2 seconds, with a full
   pool 24 seconds;

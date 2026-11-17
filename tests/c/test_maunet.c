@@ -35,6 +35,12 @@ int main(void) {
     settings.test_timeout_ms = 800;
     settings.test_url = "http://127.0.0.1:9/204";
 
+    /* Slow-node policy defaults: the agent replaces an active link that is 3x
+     * slower than the pool, above 1 s, three checks in a row. */
+    expect(settings.slow_factor == 3 && settings.slow_floor_ms == 1000 &&
+               settings.slow_checks == 3 && settings.slow_cooldown_sec == 600,
+           "slow policy defaults", "");
+
     expect(!IsMaunetReady(), "not ready before init", "");
     expect(!SetMaunetLinkAsDefault(1), "link call before init fails", "");
     expect(GetMaunetError()[0] != '\0', "error message before init", "");
@@ -149,6 +155,26 @@ int main(void) {
     expect(!IsMaunetReady(), "not ready after deinit", "");
     DeinitMaunet(); /* idempotent */
     expect(!AddMaunetLink(dead_a).id, "add after deinit fails", "");
+
+    /* The agent and its slow-node policy are reachable through the settings
+     * alone: a negative slow_factor turns the policy off. There are no
+     * subscriptions, so the agent starts and idles without network traffic. */
+    char agent_db[256];
+    snprintf(agent_db, sizeof(agent_db), "/tmp/maunet-agent-%ld.db", (long)getpid());
+    unlink(agent_db);
+    maunet_settings agent_settings = MaunetSettingsDefault();
+    agent_settings.db_path = agent_db;
+    agent_settings.request_limit = 0;
+    agent_settings.run_agent = true;
+    agent_settings.slow_factor = -1;
+    agent_settings.slow_floor_ms = 1500;
+    agent_settings.slow_checks = 5;
+    agent_settings.slow_cooldown_sec = 120;
+    expect(InitMaunet(&agent_settings), "init with the agent enabled", GetMaunetError());
+    expect(GetMaunetStatus().agent_running, "agent started from the settings", "");
+    DeinitMaunet();
+    expect(!IsMaunetReady(), "deinit stops the agent", "");
+    unlink(agent_db);
 
     unlink(db_path);
     printf("\n%s\n", failures == 0 ? "all maunet tests passed" : "maunet tests failed");

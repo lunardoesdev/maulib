@@ -240,6 +240,17 @@ MEWNET_SUBS_API mewnet_error mewnet_subs_random_best_alive(mewnet_subs* db,
                                                            int64_t avoid_id,
                                                            size_t candidates,
                                                            mewnet_subs_proxy* out);
+/*
+ * Median of `last_delay_ms` over up to `candidates` best alive proxies other
+ * than `exclude_id`. Proxies without a measured delay are ignored. `samples`
+ * reports how many values went into the median (0 means "no baseline").
+ */
+MEWNET_SUBS_API mewnet_error mewnet_subs_median_delay(mewnet_subs* db,
+                                                      int64_t group_id,
+                                                      int64_t exclude_id,
+                                                      size_t candidates,
+                                                      unsigned* median_ms,
+                                                      size_t* samples);
 
 /* Testing and rating. */
 typedef struct mewnet_subs_test_result {
@@ -287,6 +298,13 @@ MEWNET_SUBS_API mewnet_subs_test_result mewnet_subs_record_test(mewnet_subs* db,
 MEWNET_SUBS_API mewnet_error mewnet_subs_record_health(mewnet_subs* db,
                                                        int64_t proxy_id,
                                                        bool ok);
+/* Same, but also refreshes `last_delay_ms` when the probe succeeded and the
+ * caller measured a latency. The agent uses it so the pool comparison for the
+ * active proxy works with fresh numbers instead of the discovery-time delay. */
+MEWNET_SUBS_API mewnet_error mewnet_subs_record_health_delay(mewnet_subs* db,
+                                                             int64_t proxy_id,
+                                                             bool ok,
+                                                             unsigned delay_ms);
 
 /* Shared rate limiter. Called automatically by fetch and test_next. */
 MEWNET_SUBS_API mewnet_error mewnet_subs_rate_limit_wait(mewnet_subs* db);
@@ -311,6 +329,17 @@ typedef struct mewnet_agent_config {
     int health_timeout_ms;
     const char* health_url;
     const char* health_expected;
+    /* Slow-proxy policy. The active proxy is checked separately from the
+     * pool: its latency is smoothed (EWMA) and compared with the median of the
+     * best alive nodes. `slow_factor` times the median and at least
+     * `slow_floor_ms` for `slow_checks` health checks in a row means the node
+     * works but is bad, and the agent switches away. `slow_cooldown_sec` keeps
+     * such switches apart, so a globally slow network cannot rotate the pool.
+     * `slow_factor = 0` disables the policy. */
+    int slow_factor;
+    int slow_floor_ms;
+    int slow_checks;
+    int slow_cooldown_sec;
     int run_seconds; /* 0 = run until mewnet_agent_stop() */
 } mewnet_agent_config;
 

@@ -63,6 +63,17 @@ typedef struct maunet_settings {
     size_t batch;       /* agent: configs per batch, 0: 70 */
     size_t concurrency; /* agent: parallel checks, 0: 70 */
     bool run_agent;     /* start the discovery agent together with the core */
+
+    /*
+     * Slow-node policy of the agent. The active link is health-checked
+     * separately from discovery; when it keeps answering but is much slower
+     * than the pool, it is replaced by a random verified working link.
+     * A negative `slow_factor` disables the policy.
+     */
+    int slow_factor;       /* 0: 3x the pool median */
+    int slow_floor_ms;     /* 0: 1000 ms absolute floor */
+    int slow_checks;       /* 0: 3 checks in a row */
+    int slow_cooldown_sec; /* 0: 600 s between such switches */
 } maunet_settings;
 
 /* One stored link. `id` is the id you pass to the link functions. */

@@ -79,8 +79,9 @@ class Origin:
 class ForwardProxy:
     """Minimal HTTP proxy. Supports CONNECT and absolute-form requests."""
 
-    def __init__(self, upstream_port, port=0):
+    def __init__(self, upstream_port, port=0, delay=0.0):
         self.upstream_port = upstream_port
+        self.delay = delay
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.sock.bind(("127.0.0.1", port))
@@ -111,6 +112,9 @@ class ForwardProxy:
                 data += chunk
             line = data.split(b"\r\n", 1)[0].decode("latin1")
             method, target, version = line.split(" ", 2)
+            if self.delay > 0:
+                # Artificial latency: the proxy works, it is just slow.
+                time.sleep(self.delay)
             if method == "CONNECT":
                 host, port = target.rsplit(":", 1)
                 upstream = socket.create_connection((host, int(port)), timeout=3)
@@ -490,6 +494,72 @@ def main():
         ok, detail = wait_curl_ok(wait_port, origin.url())
         check("wait: traffic works", ok, str(detail))
         waiter.stop()
+
+        # A proxy that answers health checks but is far slower than the pool is
+        # "working" and would never be replaced by the failure path, so the
+        # engine has to notice the latency degradation itself.
+        slow_db = os.path.join(work, "slow.db")
+        slow_proxy = ForwardProxy(origin.port, delay=0.45)
+        fast_proxies = [ForwardProxy(origin.port), ForwardProxy(origin.port)]
+        slow_sub = SubscriptionServer([proxy_link(slow_proxy, "proxy-1")])
+        slow_app = None
+        try:
+            slow_app = Headless(
+                [
+                    "--run-seconds", "90",
+                    "--db", slow_db,
+                    "--proxy-port", "0",
+                    "--batch", "10",
+                    "--concurrency", "10",
+                    "--timeout", "2000",
+                    "--slow-interval", "1",
+                    "--fetch-interval", "2",
+                    "--pool-target", "3",
+                    "--health-interval", "1",
+                    "--health-timeout", "1500",
+                    "--health-url", origin.url(),
+                    "--health-expected", "204",
+                    "--test-url", origin.url(),
+                    "--test-expected", "204",
+                    "--slow-factor", "2",
+                    "--slow-floor", "250",
+                    "--slow-checks", "2",
+                    "--slow-cooldown", "5",
+                    slow_sub.url(),
+                ]
+            )
+            ready = slow_app.wait_for(r"READY local=", timeout=30)
+            check("slow: bootstrap", ready >= 0)
+            names = slow_app.active_names()
+            check("slow: the slow proxy is active first",
+                  bool(names) and proxy_index(names[-1]) == 1, str(names[-1:]))
+
+            # Publish the fast nodes. The refresh interval is 2 s, so they are
+            # fetched and tested while the slow node stays active.
+            slow_sub.links.extend(
+                proxy_link(proxy, f"proxy-{i + 2}") for i, proxy in enumerate(fast_proxies)
+            )
+            slow_seen = slow_app.wait_for(r"SLOW try=", timeout=45)
+            check("slow: latency degradation detected", slow_seen >= 0)
+
+            deadline = time.time() + 30
+            moved = False
+            while time.time() < deadline:
+                names = slow_app.active_names()
+                if names and proxy_index(names[-1]) != 1:
+                    moved = True
+                    break
+                time.sleep(0.2)
+            check("slow: switched away from the slow proxy", moved,
+                  str(slow_app.active_names()[-3:]))
+            ok, detail = wait_curl_ok(slow_app.proxy_port(), origin.url())
+            check("slow: traffic works after the switch", ok, str(detail))
+        finally:
+            if slow_app is not None:
+                slow_app.stop()
+            for proxy in [slow_proxy, *fast_proxies]:
+                proxy.stop()
+            slow_sub.close()
     finally:
         if app is not None:
             app.stop()

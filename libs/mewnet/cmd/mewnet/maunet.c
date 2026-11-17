@@ -38,6 +38,10 @@ typedef struct maunet_state {
     int request_window_seconds;
     int fetch_interval_sec;
     int pool_target;
+    int slow_factor;
+    int slow_floor_ms;
+    int slow_checks;
+    int slow_cooldown_sec;
     size_t batch;
     size_t concurrency;
 
@@ -154,6 +158,10 @@ maunet_settings MaunetSettingsDefault(void) {
     s.request_window_seconds = 240;
     s.fetch_interval_sec = 21600;
     s.pool_target = 12;
+    s.slow_factor = 3;
+    s.slow_floor_ms = 1000;
+    s.slow_checks = 3;
+    s.slow_cooldown_sec = 600;
     s.batch = 70;
     s.concurrency = 70;
     s.run_agent = false;
@@ -217,6 +225,19 @@ bool InitMaunet(const maunet_settings* settings) {
         if (settings->pool_target > 0) {
             s.pool_target = settings->pool_target;
         }
+        /* 0 keeps the default, a negative factor switches the policy off. */
+        if (settings->slow_factor != 0) {
+            s.slow_factor = settings->slow_factor;
+        }
+        if (settings->slow_floor_ms > 0) {
+            s.slow_floor_ms = settings->slow_floor_ms;
+        }
+        if (settings->slow_checks > 0) {
+            s.slow_checks = settings->slow_checks;
+        }
+        if (settings->slow_cooldown_sec > 0) {
+            s.slow_cooldown_sec = settings->slow_cooldown_sec;
+        }
         if (settings->batch > 0) {
             s.batch = settings->batch;
         }
@@ -255,6 +276,10 @@ bool InitMaunet(const maunet_settings* settings) {
     g.request_window_seconds = s.request_window_seconds;
     g.fetch_interval_sec = s.fetch_interval_sec;
     g.pool_target = s.pool_target;
+    g.slow_factor = s.slow_factor;
+    g.slow_floor_ms = s.slow_floor_ms;
+    g.slow_checks = s.slow_checks;
+    g.slow_cooldown_sec = s.slow_cooldown_sec;
     g.batch = s.batch;
     g.concurrency = s.concurrency;
 
@@ -314,6 +339,10 @@ bool InitMaunet(const maunet_settings* settings) {
         agent_config.health_timeout_ms = g.health_timeout_ms;
         agent_config.health_url = g.health_url;
         agent_config.health_expected = g.health_expected;
+        agent_config.slow_factor = g.slow_factor < 0 ? 0 : g.slow_factor;
+        agent_config.slow_floor_ms = g.slow_floor_ms;
+        agent_config.slow_checks = g.slow_checks;
+        agent_config.slow_cooldown_sec = g.slow_cooldown_sec;
         mewnet_agent_callbacks callbacks;
         memset(&callbacks, 0, sizeof(callbacks));
         g.agent = mewnet_agent_start(&agent_config, callbacks);

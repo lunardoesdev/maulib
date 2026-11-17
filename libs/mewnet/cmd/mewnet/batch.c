@@ -324,3 +324,68 @@ mewnet_error mewnet_subs_next_alive(mewnet_subs* db, int64_t group_id,
     sqlite3_finalize(stmt);
     return mewnet_subs_get_proxy(db, id, out);
 }
+
+mewnet_error mewnet_subs_median_delay(mewnet_subs* db, int64_t group_id,
+                                      int64_t exclude_id, size_t candidates,
+                                      unsigned* median_ms, size_t* samples) {
+    if (median_ms != NULL) *median_ms = 0;
+    if (samples != NULL) *samples = 0;
+    if (db == NULL) {
+        return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db is required");
+    }
+    if (candidates == 0) {
+        candidates = 5;
+    }
+    if (candidates > 50) {
+        candidates = 50;
+    }
+
+    sqlite3_stmt* stmt = NULL;
+    mewnet_error err;
+    subs_clear_error(&err);
+    const char* sql =
+        "SELECT t.delay FROM ("
+        " SELECT last_delay_ms AS delay FROM proxies"
+        " WHERE alive=1 AND (?=0 OR group_id=?) AND id<>?"
+        " AND last_delay_ms IS NOT NULL AND last_delay_ms>0"
+        " ORDER BY health_failures ASC, rating DESC, last_delay_ms ASC, id ASC"
+        " LIMIT ?"
+        ") t ORDER BY t.delay ASC";
+    if (subs_db_prepare(db->db, &stmt, sql, &err) != 0) {
+        return err;
+    }
+    sqlite3_bind_int64(stmt, 1, group_id);
+    sqlite3_bind_int64(stmt, 2, group_id);
+    sqlite3_bind_int64(stmt, 3, exclude_id);
+    sqlite3_bind_int64(stmt, 4, (int64_t)candidates);
+
+    unsigned values[50];
+    size_t count = 0;
+    int rc = sqlite3_step(stmt);
+    while (rc == SQLITE_ROW && count < sizeof(values) / sizeof(values[0])) {
+        unsigned delay = (unsigned)sqlite3_column_int64(stmt, 0);
+        if (delay > 0) {
+            values[count++] = delay;
+        }
+        rc = sqlite3_step(stmt);
+    }
+    if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
+        sqlite3_finalize(stmt);
+        return subs_db_error(db->db, "select pool delays");
+    }
+    sqlite3_finalize(stmt);
+
+    if (samples != NULL) *samples = count;
+    if (count == 0) {
+        return subs_make_error(MEWNET_ERROR_NOT_FOUND, "no measured delays in the pool");
+    }
+    /* Rows come back sorted, so the median sits in the middle. */
+    if (median_ms != NULL) {
+        if (count % 2 == 1) {
+            *median_ms = values[count / 2];
+        } else {
+            *median_ms = (values[count / 2 - 1] + values[count / 2]) / 2;
+        }
+    }
+    return subs_make_error(MEWNET_ERROR_NONE, "");
+}

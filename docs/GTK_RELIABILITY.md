@@ -30,8 +30,11 @@ render events, and send `switch` / `fetch subscription` commands.
 9. If all known nodes are dead, the application does not loop on them:
    it re-checks dead nodes and pulls the next subscription at the same time.
 10. If there are no subscriptions, the application waits. As soon as a subscription
-   appears, it is downloaded and discovery starts automatically.
-11. Closing the window stops both discovery and the local proxy.
+    appears, it is downloaded and discovery starts automatically.
+11. A node that keeps answering but is much slower than the pool is a bad active
+    choice even though it never fails: the health-check latency is smoothed and
+    compared with the pool median, and the agent switches away.
+12. Closing the window stops both discovery and the local proxy.
 
 ## States
 
@@ -46,6 +49,8 @@ FAST_DISCOVERY  (alive == 0)
 
 HEALTHY  (alive > 0)
   health check of the active every 6 s (2 failures out of 3 -> failover)
+  slowness check on the same probe: EWMA vs pool median
+    (>= 3x the median and >= 1000 ms for 3 checks in a row -> swap)
   slow discovery: 1 candidate per step
     pool < target  -> step 2 s
     pool >= target -> step 24 s
@@ -68,6 +73,10 @@ FAILOVER
 | `--pool-target` | 12 | how many live nodes to keep in reserve |
 | `--health-interval` | 6 s | check period for the active node |
 | `--health-timeout` | 2500 ms | health-check timeout |
+| `--slow-factor` | 3 | switch when the active is this many times the pool median (0 disables) |
+| `--slow-floor` | 1000 ms | ... and above this absolute latency |
+| `--slow-checks` | 3 | consecutive slow health checks before switching |
+| `--slow-cooldown` | 600 s | minimum gap between slowness-driven switches |
 | failures before failover | 2 of 3 | protection against false positives and against "flapping" nodes |
 | `--slow-interval` | 24 s | discovery step when the pool is full |
 | step when pool < target | 2 s | fast growth of the reserve |
@@ -77,12 +86,22 @@ FAILOVER
 
 The worst-case detection time for a dead active node is roughly
 `health_interval + health_timeout * 3` (about 15–20 s including retries).
+Slowness needs `health_interval * slow_checks` (about 18 s by default).
+
+The latency comparison mixes two probes: the active node is measured with
+`--health-url`, the pool baseline comes from the discovery tests (`--test-url`).
+Both are single requests to fast endpoints, and the absolute `--slow-floor`
+keeps a systematically slower health URL from triggering; point `--health-url`
+at `--test-url` if you want the two numbers strictly comparable.
 
 ## What happens on failures
 
 | Situation | Action |
 |---|---|
 | the active node stopped responding | 2 failures out of the last 3 -> `record_test(false)` -> next alive |
+| the active node answers but is slow | EWMA more than `slow_factor` x the pool median and at least `slow_floor` for `slow_checks` checks -> random verified node from the pool |
+| the pool has fewer than two measured nodes | no baseline: the slowness check stays quiet, nothing is switched |
+| the network itself is slow (every node is slow) | one switch at most per `slow_cooldown`, so the pool does not rotate |
 | the active node was removed from the subscription | on the next cycle `current_id=0` -> `first_alive` |
 | no live nodes, untested ones remain | `BATCH reason=fast`, first-success |
 | no live nodes, no untested ones | `BATCH` re-checks dead ones + `emergency FETCH` |
@@ -129,6 +148,7 @@ BATCH reason=fast|switch|pool tested=... alive=...
 ACTIVE id=... name=...     selected node
 READY local=http://...     local proxy is ready
 HEALTH FAIL try=1/2        the active node did not respond
+SLOW try=1/3 ewma=...      the active node answers but is much slower than the pool
 DISCOVERED id=...          a new live node was added to the pool
 SWITCH requested           the user pressed the button
 TEST ...                   candidate check
@@ -153,7 +173,7 @@ make test-agent
 
 The test is fully offline: it brings up a local HTTP origin `204` and several
 local HTTP proxies, serves them as a subscription, and runs the CLI in
-`--headless` mode. It checks 19 assertions:
+`--headless` mode. It checks 24 assertions:
 
 - bootstrap: `READY`, local port, `204` traffic;
 - the pool grew to at least 2 live nodes;
@@ -169,7 +189,10 @@ local HTTP proxies, serves them as a subscription, and runs the CLI in
   works again;
 - an empty database waits for a subscription (`WAIT no subscriptions`);
 - an external insertion of a subscription is picked up, `READY` happens, and traffic
-  works.
+  works;
+- a proxy with artificial latency (450 ms against ~5 ms neighbours) is active at
+  bootstrap, produces `SLOW try=...`, is replaced by a fast node, and traffic
+  keeps working.
 
 ### 3. UI smoke
 

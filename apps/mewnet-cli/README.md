@@ -34,7 +34,13 @@ Headless mode for scripts/tests prints machine-readable lines:
 ```
 
 It prints `PROXY http://127.0.0.1:<port>`, `STATE ...` and agent events
-(`FETCH`, `BATCH`, `ACTIVE`, `HEALTH FAIL`, `SWITCH`, `DISCOVERED`).
+(`FETCH`, `BATCH`, `ACTIVE`, `HEALTH FAIL`, `SLOW`, `SWITCH`, `DISCOVERED`).
+
+The agent drops an active proxy that fails health checks (`--health-*`) and also
+one that keeps answering but is far slower than the pool: `--slow-factor`
+(default 3) times the pool median, above `--slow-floor` (default 1000 ms), for
+`--slow-checks` checks in a row (default 3), with at most one such switch per
+`--slow-cooldown` seconds (default 600). `--slow-factor 0` disables it.
 
 All reliability behavior (health checks, failover, pool growth, subscription
 scheduling) is in the library, so GTK and CLI behave identically. See
