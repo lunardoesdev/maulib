@@ -129,7 +129,11 @@ typedef struct mewnet_subs_proxy {
     bool alive;
     bool manual;
     int64_t last_tested_at;
-    unsigned last_delay_ms;
+    unsigned last_delay_ms;   /* total time to the last byte (TTLB) */
+    unsigned last_ttfb_ms;    /* time to the first byte; the ping */
+    unsigned last_ttlb_ms;
+    unsigned long long last_bytes;
+    unsigned long long last_speed_bps;
     char last_error[MEWNET_ERROR_MAX];
 } mewnet_subs_proxy;
 
@@ -157,6 +161,10 @@ typedef struct mewnet_subs_proxy_summary {
     bool manual;
     int64_t last_tested_at;
     unsigned last_delay_ms;
+    unsigned last_ttfb_ms;
+    unsigned last_ttlb_ms;
+    unsigned long long last_bytes;
+    unsigned long long last_speed_bps;
     char last_error[MEWNET_ERROR_MAX];
 } mewnet_subs_proxy_summary;
 
@@ -230,9 +238,18 @@ MEWNET_SUBS_API mewnet_error mewnet_subs_next_alive(mewnet_subs* db, int64_t gro
                                                     int64_t exclude_id,
                                                     mewnet_subs_proxy* out);
 /*
- * Pick a random proxy among the best alive candidates (highest rating, then
- * lowest delay). `exclude_id` and `avoid_id` are not returned; pass 0 to
- * disable an exclusion. `candidates` is the size of the best-candidate window.
+ * Pick a random proxy among the best alive candidates. Candidates are ranked by
+ * a weighted score over the stored metrics, not by rating alone:
+ *
+ *   score = 0.40 * rating   (normalised to 0..1 over -20..+20)
+ *         + 0.40 * latency  (best TTFB in the pool / this TTFB)
+ *         + 0.20 * speed    (this throughput / best throughput in the pool)
+ *
+ * TTFB falls back to the last TTLB delay for proxies tested before the metric
+ * existed, and speed is neutral (0.5) when the test URL returned no body.
+ * Proxies with more health-check failures always sort after healthy ones.
+ * `exclude_id` and `avoid_id` are not returned; pass 0 to disable an exclusion.
+ * `candidates` is the size of the best-candidate window.
  */
 MEWNET_SUBS_API mewnet_error mewnet_subs_random_best_alive(mewnet_subs* db,
                                                            int64_t group_id,
@@ -257,7 +274,11 @@ typedef struct mewnet_subs_test_result {
     mewnet_error error;
     int64_t proxy_id;
     bool alive;
-    unsigned delay_ms;
+    unsigned delay_ms;   /* TTLB */
+    unsigned ttfb_ms;    /* ping */
+    unsigned ttlb_ms;
+    unsigned long long bytes;
+    unsigned long long speed_bps;
     int rating_before;
     int rating_after;
     int rating_delta;
@@ -293,6 +314,13 @@ MEWNET_SUBS_API mewnet_subs_test_result mewnet_subs_record_test(mewnet_subs* db,
                                                              bool alive,
                                                              unsigned delay_ms,
                                                              const char* error_text);
+/* Same, but with the metrics collected by the probe: TTFB (ping), TTLB,
+ * body bytes and throughput. Pass zeros when a probe could not measure them. */
+MEWNET_SUBS_API mewnet_subs_test_result mewnet_subs_record_test_metrics(
+    mewnet_subs* db, int64_t proxy_id, bool alive, unsigned delay_ms,
+    unsigned ttfb_ms, unsigned ttlb_ms,
+    unsigned long long bytes, unsigned long long speed_bps,
+    const char* error_text);
 /* Health is a routing signal, not a definitive liveness test: it does not
  * change `alive`, it only affects selection order. */
 MEWNET_SUBS_API mewnet_error mewnet_subs_record_health(mewnet_subs* db,
@@ -305,6 +333,12 @@ MEWNET_SUBS_API mewnet_error mewnet_subs_record_health_delay(mewnet_subs* db,
                                                              int64_t proxy_id,
                                                              bool ok,
                                                              unsigned delay_ms);
+/* Same, and refreshes TTFB/TTLB/bytes/speed too. A health probe that returns a
+ * body also updates the throughput used for selection. */
+MEWNET_SUBS_API mewnet_error mewnet_subs_record_health_metrics(
+    mewnet_subs* db, int64_t proxy_id, bool ok, unsigned delay_ms,
+    unsigned ttfb_ms, unsigned ttlb_ms,
+    unsigned long long bytes, unsigned long long speed_bps);
 
 /* Shared rate limiter. Called automatically by fetch and test_next. */
 MEWNET_SUBS_API mewnet_error mewnet_subs_rate_limit_wait(mewnet_subs* db);

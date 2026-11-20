@@ -66,7 +66,7 @@ def serve(directory):
 
 def main():
     if not os.path.exists(BIN):
-        print(f"SKIP: {BIN} not built (run: make subs)")
+        print(f"SKIP: {BIN} not built (run: make -C apps subs)")
         return 2
     if not os.path.exists(XRAY_BIN):
         print(f"SKIP: Xray binary not found at {XRAY_BIN}")

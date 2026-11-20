@@ -1,14 +1,14 @@
 cmake_minimum_required(VERSION 3.20)
-project(mewnet_workspace LANGUAGES C)
+project(maulib_apps LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
-set(MEWNET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
-set(MEWNET_PACKAGE_DIR "${MEWNET_ROOT}/libs/mewnet/cmd/mewnet")
-
-enable_testing()
+# This directory holds everything that is not the library itself. The library
+# sources, headers and go.mod live in the repository root; its output is dist/.
+get_filename_component(MEWNET_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+set(MEWNET_PACKAGE_DIR "${MEWNET_ROOT}")
 
 # The C toolchain used by Conda clang injects a sysroot whose indirect shared
 # library symbols do not always match the system libm, libc, etc. The Go
@@ -33,18 +33,14 @@ if(NOT MEWNET_LIBRARY)
     endif()
 endif()
 if(NOT MEWNET_LIBRARY)
-    message(FATAL_ERROR "mewnet library not found; run 'make build' (or 'make build-mingw') first")
+    message(FATAL_ERROR "libmewnet not found in dist/; build the library from the repository root first (see README.md)")
 endif()
 
-add_subdirectory(apps/mewnet-subs)
-add_subdirectory(apps/mewnet-watch)
-add_subdirectory(apps/mewnet-discovery)
+add_subdirectory(mewnet-subs)
+add_subdirectory(mewnet-watch)
+add_subdirectory(mewnet-discovery)
 if(NOT WIN32)
-    add_subdirectory(apps/mewnet-cli)
-endif()
-option(MEWNET_BUILD_TESTS "Build C unit tests" ON)
-if(MEWNET_BUILD_TESTS AND NOT WIN32)
-    add_subdirectory(tests/subs)
+    add_subdirectory(mewnet-cli)
 endif()
 
 option(MEWNET_BUILD_GTK "Build the GTK4 control panel" ON)
@@ -54,7 +50,7 @@ if(MEWNET_BUILD_GTK)
         pkg_check_modules(GTK4 QUIET gtk4)
     endif()
     if(GTK4_FOUND)
-        add_subdirectory(apps/mewnet-gtk)
+        add_subdirectory(mewnet-gtk)
     else()
         message(STATUS "GTK4 not found; mewnet-gtk will not be built")
     endif()

@@ -4,7 +4,7 @@ C + GTK4 control panel for subscriptions and proxy discovery. The interface is
 in English; logs use stable machine-readable event names.
 
 ```bash
-make gtk
+make -C apps gtk          # from the repository root
 # or
 ./build/apps/mewnet-gtk/mewnet-gtk \
   --db data/mewnet-gtk.db \
@@ -13,7 +13,7 @@ make gtk
 ```
 
 GTK4 development files are required (`gtk4.pc`). If GTK4 is not installed,
-`make subs` simply skips this binary.
+`make -C apps subs` simply skips this binary.
 
 ## What it does
 
@@ -83,7 +83,7 @@ curl -x http://127.0.0.1:18085 https://lua.org
 Automated offline failover/recovery test:
 
 ```bash
-make test-agent
+make -C tests test-agent
 ```
 
 It starts local HTTP proxies and a local `204` origin, then verifies bootstrap,

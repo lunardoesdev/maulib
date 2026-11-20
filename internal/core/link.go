@@ -87,10 +87,14 @@ type LinkDescription struct {
 
 // PingResult is the outcome of a latency test through one link.
 type PingResult struct {
-	LinkID uint64
-	Name   string
-	URL    string
-	Delay  uint16
+	LinkID   uint64
+	Name     string
+	URL      string
+	Delay    uint16
+	TTFB     uint32
+	TTLB     uint32
+	Bytes    int64
+	SpeedBps int64
 }
 
 // SpeedResult is the outcome of a throughput test through one link.
@@ -118,10 +122,14 @@ type ExitIPResult struct {
 
 // PingOutcome is one item of a concurrent multi-link ping.
 type PingOutcome struct {
-	LinkID uint64
-	Name   string
-	Delay  uint16
-	Err    error
+	LinkID   uint64
+	Name     string
+	Delay    uint16
+	TTFB     uint32
+	TTLB     uint32
+	Bytes    int64
+	SpeedBps int64
+	Err      error
 }
 
 // PingManyResult is the outcome of a concurrent multi-link ping.
@@ -507,15 +515,19 @@ func (c *Core) linkPingContext(ctx context.Context, id uint64, opts DelayOptions
 	testCtx, cancel := context.WithTimeout(ctx, resolved.timeout)
 	defer cancel()
 
-	delay, err := safeURLTest(testCtx, proxy, resolved.url, resolved.expected)
+	metrics, err := probeProxyGet(testCtx, proxy, resolved.url, resolved.expected)
 	if err != nil {
 		return nil, err
 	}
 	return &PingResult{
-		LinkID: id,
-		Name:   link.Name,
-		Delay:  delay,
-		URL:    resolved.url,
+		LinkID:   id,
+		Name:     link.Name,
+		URL:      resolved.url,
+		Delay:    metrics.delay(),
+		TTFB:     metrics.ttfbMS(),
+		TTLB:     metrics.ttlbMS(),
+		Bytes:    metrics.bytes,
+		SpeedBps: metrics.speedBps(),
 	}, nil
 }
 
@@ -701,9 +713,13 @@ func (c *Core) pingManyContext(ctx context.Context, ids []uint64, opts DelayOpti
 				return
 			}
 			outcomes[index] = PingOutcome{
-				LinkID: linkID,
-				Name:   value.Name,
-				Delay:  value.Delay,
+				LinkID:   linkID,
+				Name:     value.Name,
+				Delay:    value.Delay,
+				TTFB:     value.TTFB,
+				TTLB:     value.TTLB,
+				Bytes:    value.Bytes,
+				SpeedBps: value.SpeedBps,
 			}
 		}(i, id)
 	}

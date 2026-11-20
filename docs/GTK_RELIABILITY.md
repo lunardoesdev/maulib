@@ -19,10 +19,11 @@ render events, and send `switch` / `fetch subscription` commands.
    checks out of the last three mark it dead and trigger an immediate failover.
 4. While a working node exists, discovery does not re-check live nodes. It looks
    only at untested ones, then at dead ones.
-5. The "change proxy" button picks a random node from the best live ones
-   (rating, then latency), excluding the current and the previously selected one.
+5. The "change proxy" button picks a random node from the best live ones by the
+   weighted score (rating, TTFB, throughput), excluding the current and the
+   previously selected one.
 6. Subscription and group priorities are removed from the behaviour: selection is
-   driven by rating, latency, and `health_failures`.
+   driven by rating, TTFB (ping), TTLB-based speed, and `health_failures`.
 7. Health-check is a signal for selection, not a liveness test: it does not
    set `alive=0`. Otherwise temporary failures would regularly zero the pool.
 8. While there are no working nodes, discovery is aggressive: batches of 70,
@@ -108,7 +109,7 @@ at `--test-url` if you want the two numbers strictly comparable.
 | the subscription failed to download | log `FETCH FAILED`, retry after a pause; the application does not crash |
 | no subscriptions | `WAIT no subscriptions`, polling 0.5 s |
 | a new subscription was added | `pending_fetch_id` -> fetch immediately, then discovery |
-| "change proxy", other alive nodes exist | random from the best (top-5 by rating/latency), excluding the current and the previous one |
+| "change proxy", other alive nodes exist | random from the best (top-5 by rating/TTFB/speed), excluding the current and the previous one |
 | "change proxy", no other alive nodes | batch of candidates; if empty — emergency fetch |
 | pool < target after switching | one pool-batch (does not change the active node) |
 | window closed | stop worker -> `mewnet_close` -> port released |
@@ -160,7 +161,7 @@ WAIT no subscriptions ...  waiting for sources
 ### 1. Regular suite
 
 ```bash
-make test
+make -C tests test
 ```
 
 Covers the Go core, the C ABI, SQLite/rating, and e2e with a local Xray.
@@ -168,7 +169,7 @@ Covers the Go core, the C ABI, SQLite/rating, and e2e with a local Xray.
 ### 2. Agent fault tolerance
 
 ```bash
-make test-agent
+make -C tests test-agent
 ```
 
 The test is fully offline: it brings up a local HTTP origin `204` and several
@@ -215,7 +216,7 @@ are moved to the surviving record.
 ## Manual check
 
 ```bash
-make gtk
+make -C apps gtk
 curl -x http://127.0.0.1:<port> https://lua.org
 ```
 

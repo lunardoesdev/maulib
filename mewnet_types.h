@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-#define MEWNET_ABI_VERSION 2
+#define MEWNET_ABI_VERSION 3
 
 #define MEWNET_NAME_MAX 512
 #define MEWNET_TYPE_MAX 32
@@ -159,12 +159,20 @@ typedef struct mewnet_delay_result {
     int port;
     char url[MEWNET_URL_MAX];
     unsigned delay_ms;
+    unsigned ttfb_ms;
+    unsigned ttlb_ms;
+    unsigned long long bytes;
+    unsigned long long speed_bps;
 } mewnet_delay_result;
 
 typedef struct mewnet_ping_result {
     bool ok;
     mewnet_error_code error;
     unsigned delay_ms;
+    unsigned ttfb_ms;
+    unsigned ttlb_ms;
+    unsigned long long bytes;
+    unsigned long long speed_bps;
 } mewnet_ping_result;
 
 typedef struct mewnet_speed_options {
@@ -218,6 +226,10 @@ typedef struct mewnet_link_test_result {
     char server[MEWNET_HOST_MAX];
     int port;
     unsigned delay_ms;
+    unsigned ttfb_ms;
+    unsigned ttlb_ms;
+    unsigned long long bytes;
+    unsigned long long speed_bps;
 } mewnet_link_test_result;
 
 typedef struct mewnet_probe_result {
@@ -225,6 +237,10 @@ typedef struct mewnet_probe_result {
     mewnet_error error;
     int status;
     unsigned delay_ms;
+    unsigned ttfb_ms;
+    unsigned ttlb_ms;
+    unsigned long long bytes;
+    unsigned long long speed_bps;
 } mewnet_probe_result;
 
 typedef struct mewnet_fingerprint_result {

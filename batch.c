@@ -134,8 +134,10 @@ mewnet_subs_batch_test_result mewnet_subs_test_batch(mewnet_subs* db, mewnet_ins
         if (item->error.code == MEWNET_ERROR_CANCELLED) {
             continue;
         }
-        mewnet_subs_test_result record = mewnet_subs_record_test(
-            db, ids[i], item->ok, item->delay_ms, item->ok ? "" : item->error.message);
+        mewnet_subs_test_result record = mewnet_subs_record_test_metrics(
+            db, ids[i], item->ok, item->delay_ms,
+            item->ttfb_ms, item->ttlb_ms, item->bytes, item->speed_bps,
+            item->ok ? "" : item->error.message);
         if (record.error.code != MEWNET_ERROR_NONE && result.error.code == MEWNET_ERROR_NONE) {
             result.error = record.error;
         }
@@ -220,8 +222,10 @@ mewnet_error mewnet_subs_first_alive(mewnet_subs* db, int64_t group_id,
     const char* sql =
         "SELECT id FROM proxies WHERE alive=1 AND (?=0 OR group_id=?)"
         " ORDER BY health_failures ASC, rating DESC,"
-        " CASE WHEN last_delay_ms IS NULL OR last_delay_ms<=0"
-        "      THEN 2147483647 ELSE last_delay_ms END ASC,"
+        " CASE WHEN COALESCE(NULLIF(last_ttfb_ms,0), NULLIF(last_delay_ms,0)) IS NULL"
+        "      THEN 2147483647"
+        "      ELSE COALESCE(NULLIF(last_ttfb_ms,0), last_delay_ms) END ASC,"
+        " COALESCE(last_speed_bps,0) DESC,"
         " last_tested_at DESC, id ASC LIMIT 1";
     if (subs_db_prepare(db->db, &stmt, sql, &err) != 0) {
         return err;
@@ -258,16 +262,36 @@ mewnet_error mewnet_subs_random_best_alive(mewnet_subs* db, int64_t group_id,
     sqlite3_stmt* stmt = NULL;
     mewnet_error err;
     subs_clear_error(&err);
+    /* Weighted choice, not "rating only": rating, latency (TTFB, falling back
+     * to the old delay) and throughput (TTLB-based, when the test URL returned
+     * a body) are normalised against the pool. The top `candidates` window is
+     * then sampled randomly so equal-quality nodes rotate. */
     const char* sql =
-        "SELECT id FROM ("
-        " SELECT id FROM proxies"
+        "WITH pool AS ("
+        " SELECT id, health_failures, rating,"
+        "  COALESCE(NULLIF(last_ttfb_ms,0), NULLIF(last_delay_ms,0)) AS latency,"
+        "  NULLIF(last_speed_bps,0) AS speed"
+        " FROM proxies"
         " WHERE alive=1 AND (?=0 OR group_id=?) AND id<>? AND id<>?"
-        " ORDER BY health_failures ASC, rating DESC,"
-        " CASE WHEN last_delay_ms IS NULL OR last_delay_ms<=0"
-        "      THEN 2147483647 ELSE last_delay_ms END ASC,"
-        " id ASC"
-        " LIMIT ?"
-        ") ORDER BY random() LIMIT 1";
+        "), stats AS ("
+        " SELECT MIN(latency) AS min_latency, MAX(speed) AS max_speed FROM pool"
+        "), scored AS ("
+        " SELECT pool.id AS id, pool.health_failures AS failures,"
+        "  (0.40 * CASE"
+        "     WHEN pool.rating <= -20 THEN 0.0"
+        "     WHEN pool.rating >= 20 THEN 1.0"
+        "     ELSE (pool.rating + 20) / 40.0 END"
+        "   + 0.40 * CASE"
+        "     WHEN pool.latency IS NULL OR stats.min_latency IS NULL THEN 0.0"
+        "     ELSE stats.min_latency * 1.0 / pool.latency END"
+        "   + 0.20 * CASE"
+        "     WHEN pool.speed IS NULL OR stats.max_speed IS NULL THEN 0.5"
+        "     ELSE pool.speed * 1.0 / stats.max_speed END) AS score"
+        " FROM pool, stats"
+        ")"
+        " SELECT id FROM ("
+        "  SELECT id FROM scored ORDER BY failures ASC, score DESC, id ASC LIMIT ?"
+        " ) ORDER BY random() LIMIT 1";
     if (subs_db_prepare(db->db, &stmt, sql, &err) != 0) {
         return err;
     }

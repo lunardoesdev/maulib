@@ -19,7 +19,7 @@ time to *first usable pool*, not the time to test everything.
 ## Run
 
 ```bash
-make subs        # builds all clients, including this one
+make -C apps subs    # from the repository root; builds all clients
 ./build/apps/mewnet-discovery/mewnet-discovery --db data/discovery.db \
   --fast 8 --bulk 100 --run-seconds 300 \
   https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt \
@@ -29,7 +29,7 @@ make subs        # builds all clients, including this one
 or the shortcut:
 
 ```bash
-make discovery   # same, 120 s, one subscription
+make -C apps discovery   # same, 120 s, one subscription
 ```
 
 Sample output from a run on two public subscriptions (4314 configs):

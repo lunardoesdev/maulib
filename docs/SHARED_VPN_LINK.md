@@ -8,7 +8,7 @@
    authentication;
 3. the `ping`, `speed`, `exit_ip` methods and their async variants.
 
-Headers: `libs/mewnet/cmd/mewnet/mewnet.h`, `libs/mewnet/cmd/mewnet/mewnet_types.h`.
+Headers: `mewnet.h`, `mewnet_types.h`.
 ABI v2 — C structs, no JSON strings. Errors are returned in the result, and for
 simple operations as a `mewnet_error_code` code.
 
@@ -231,7 +231,7 @@ MEWNET_TEST_VLESS='vless://...' ./dist/test_ping
 A check without a real link (brings up a local Xray and a `204` target):
 
 ```bash
-make test-c-ping-local
+make -C tests test-c-ping-local
 ```
 
 Example output:

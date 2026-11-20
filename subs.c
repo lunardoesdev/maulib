@@ -55,6 +55,10 @@ static const char* k_proxies_schema =
     " manual INTEGER NOT NULL DEFAULT 0,"
     " last_tested_at INTEGER,"
     " last_delay_ms INTEGER,"
+    " last_ttfb_ms INTEGER,"
+    " last_ttlb_ms INTEGER,"
+    " last_bytes INTEGER,"
+    " last_speed_bps INTEGER,"
     " last_error TEXT NOT NULL DEFAULT '',"
     " last_up_day INTEGER NOT NULL DEFAULT 0,"
     " last_down_day INTEGER NOT NULL DEFAULT 0,"
@@ -76,6 +80,10 @@ static const char* k_events_schema =
     " ts INTEGER NOT NULL,"
     " ok INTEGER NOT NULL,"
     " delay_ms INTEGER,"
+    " ttfb_ms INTEGER,"
+    " ttlb_ms INTEGER,"
+    " bytes INTEGER,"
+    " speed_bps INTEGER,"
     " error TEXT NOT NULL DEFAULT '',"
     " rating_before INTEGER NOT NULL,"
     " rating_after INTEGER NOT NULL,"
@@ -587,6 +595,29 @@ static int subs_migrate(mewnet_subs* db, int64_t default_group, mewnet_error* er
         }
     }
 
+    /* v3: latency/speed metrics collected by every probe. */
+    if (!table_has_column(db->db, "proxies", "last_ttfb_ms")) {
+        if (subs_db_exec(db->db,
+                         "ALTER TABLE proxies ADD COLUMN last_ttfb_ms INTEGER;"
+                         "ALTER TABLE proxies ADD COLUMN last_ttlb_ms INTEGER;"
+                         "ALTER TABLE proxies ADD COLUMN last_bytes INTEGER;"
+                         "ALTER TABLE proxies ADD COLUMN last_speed_bps INTEGER;",
+                         err) != 0) {
+            return -1;
+        }
+    }
+
+    if (!table_has_column(db->db, "test_events", "ttfb_ms")) {
+        if (subs_db_exec(db->db,
+                         "ALTER TABLE test_events ADD COLUMN ttfb_ms INTEGER;"
+                         "ALTER TABLE test_events ADD COLUMN ttlb_ms INTEGER;"
+                         "ALTER TABLE test_events ADD COLUMN bytes INTEGER;"
+                         "ALTER TABLE test_events ADD COLUMN speed_bps INTEGER;",
+                         err) != 0) {
+            return -1;
+        }
+    }
+
     if (!table_has_column(db->db, "subscriptions", "group_id")) {
         char sql[256];
         snprintf(sql, sizeof(sql),
@@ -655,7 +686,7 @@ static int subs_migrate(mewnet_subs* db, int64_t default_group, mewnet_error* er
     }
 
     char version[64];
-    snprintf(version, sizeof(version), "PRAGMA user_version = 2;");
+    snprintf(version, sizeof(version), "PRAGMA user_version = 3;");
     return subs_db_exec(db->db, version, err);
 }
 
@@ -1369,11 +1400,13 @@ static mewnet_subs_proxy_list load_proxies_impl(mewnet_subs* db, int64_t group_i
 
     const char* sql_all =
         "SELECT id,group_id,link,name,protocol,server,port,rating,alive,manual,"
-        "last_tested_at,last_delay_ms,last_error FROM proxies"
+        "last_tested_at,last_delay_ms,last_ttfb_ms,last_ttlb_ms,last_bytes,"
+        "last_speed_bps,last_error FROM proxies"
         " ORDER BY id ASC LIMIT ? OFFSET ?";
     const char* sql_group =
         "SELECT id,group_id,link,name,protocol,server,port,rating,alive,manual,"
-        "last_tested_at,last_delay_ms,last_error FROM proxies"
+        "last_tested_at,last_delay_ms,last_ttfb_ms,last_ttlb_ms,last_bytes,"
+        "last_speed_bps,last_error FROM proxies"
         " WHERE group_id=? ORDER BY id ASC LIMIT ? OFFSET ?";
     sqlite3_stmt* stmt = NULL;
     if (subs_db_prepare(db->db, &stmt, group_id > 0 ? sql_group : sql_all, &err) != 0) {
@@ -1412,7 +1445,11 @@ static mewnet_subs_proxy_list load_proxies_impl(mewnet_subs* db, int64_t group_i
         item->manual = sqlite3_column_int(stmt, 9) != 0;
         item->last_tested_at = sqlite3_column_int64(stmt, 10);
         item->last_delay_ms = (unsigned)sqlite3_column_int64(stmt, 11);
-        subs_db_copy_text(stmt, 12, item->last_error, sizeof(item->last_error));
+        item->last_ttfb_ms = (unsigned)sqlite3_column_int64(stmt, 12);
+        item->last_ttlb_ms = (unsigned)sqlite3_column_int64(stmt, 13);
+        item->last_bytes = (unsigned long long)sqlite3_column_int64(stmt, 14);
+        item->last_speed_bps = (unsigned long long)sqlite3_column_int64(stmt, 15);
+        subs_db_copy_text(stmt, 16, item->last_error, sizeof(item->last_error));
     }
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
@@ -1474,11 +1511,13 @@ mewnet_subs_proxy_summary_list mewnet_subs_load_proxy_summaries(mewnet_subs* db,
 
     const char* sql_all =
         "SELECT id,group_id,name,protocol,server,port,rating,alive,manual,"
-        "last_tested_at,last_delay_ms,last_error FROM proxies"
+        "last_tested_at,last_delay_ms,last_ttfb_ms,last_ttlb_ms,last_bytes,"
+        "last_speed_bps,last_error FROM proxies"
         " ORDER BY id ASC LIMIT ? OFFSET ?";
     const char* sql_group =
         "SELECT id,group_id,name,protocol,server,port,rating,alive,manual,"
-        "last_tested_at,last_delay_ms,last_error FROM proxies"
+        "last_tested_at,last_delay_ms,last_ttfb_ms,last_ttlb_ms,last_bytes,"
+        "last_speed_bps,last_error FROM proxies"
         " WHERE group_id=? ORDER BY id ASC LIMIT ? OFFSET ?";
     sqlite3_stmt* stmt = NULL;
     if (subs_db_prepare(db->db, &stmt, group_id > 0 ? sql_group : sql_all, &err) != 0) {
@@ -1516,7 +1555,11 @@ mewnet_subs_proxy_summary_list mewnet_subs_load_proxy_summaries(mewnet_subs* db,
         item->manual = sqlite3_column_int(stmt, 8) != 0;
         item->last_tested_at = sqlite3_column_int64(stmt, 9);
         item->last_delay_ms = (unsigned)sqlite3_column_int64(stmt, 10);
-        subs_db_copy_text(stmt, 11, item->last_error, sizeof(item->last_error));
+        item->last_ttfb_ms = (unsigned)sqlite3_column_int64(stmt, 11);
+        item->last_ttlb_ms = (unsigned)sqlite3_column_int64(stmt, 12);
+        item->last_bytes = (unsigned long long)sqlite3_column_int64(stmt, 13);
+        item->last_speed_bps = (unsigned long long)sqlite3_column_int64(stmt, 14);
+        subs_db_copy_text(stmt, 15, item->last_error, sizeof(item->last_error));
     }
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
@@ -1545,7 +1588,8 @@ mewnet_error mewnet_subs_get_proxy(mewnet_subs* db, int64_t proxy_id,
     subs_clear_error(&err);
     if (subs_db_prepare(db->db, &stmt,
                         "SELECT id,group_id,link,name,protocol,server,port,"
-                        "rating,alive,manual,last_tested_at,last_delay_ms,last_error"
+                        "rating,alive,manual,last_tested_at,last_delay_ms,"
+                        "last_ttfb_ms,last_ttlb_ms,last_bytes,last_speed_bps,last_error"
                         " FROM proxies WHERE id=?",
                         &err) != 0) {
         return err;
@@ -1572,7 +1616,11 @@ mewnet_error mewnet_subs_get_proxy(mewnet_subs* db, int64_t proxy_id,
     out->manual = sqlite3_column_int(stmt, 9) != 0;
     out->last_tested_at = sqlite3_column_int64(stmt, 10);
     out->last_delay_ms = (unsigned)sqlite3_column_int64(stmt, 11);
-    subs_db_copy_text(stmt, 12, out->last_error, sizeof(out->last_error));
+    out->last_ttfb_ms = (unsigned)sqlite3_column_int64(stmt, 12);
+    out->last_ttlb_ms = (unsigned)sqlite3_column_int64(stmt, 13);
+    out->last_bytes = (unsigned long long)sqlite3_column_int64(stmt, 14);
+    out->last_speed_bps = (unsigned long long)sqlite3_column_int64(stmt, 15);
+    subs_db_copy_text(stmt, 16, out->last_error, sizeof(out->last_error));
     sqlite3_finalize(stmt);
     return subs_make_error(MEWNET_ERROR_NONE, "");
 }

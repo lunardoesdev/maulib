@@ -306,7 +306,13 @@ func mewnet_link_ping_many(instance *C.mewnet_instance, links **C.mewnet_link, c
 	if items != nil {
 		slice := unsafe.Slice(items, len(result.Outcomes))
 		for i, outcome := range result.Outcomes {
-			fillPingResult(&slice[i], core.PingResult{Delay: outcome.Delay}, outcome.Err)
+			fillPingResult(&slice[i], core.PingResult{
+				Delay:    outcome.Delay,
+				TTFB:     outcome.TTFB,
+				TTLB:     outcome.TTLB,
+				Bytes:    outcome.Bytes,
+				SpeedBps: outcome.SpeedBps,
+			}, outcome.Err)
 		}
 	}
 	out.ok = true

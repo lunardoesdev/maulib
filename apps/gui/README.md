@@ -5,7 +5,7 @@ A simple GUI program for managing subscriptions and proxies from SQLite.
 ## Build and run
 
 ```bash
-make gui
+make -C apps gui          # from the repository root
 ./build/mewnet-gui --db data/subs.db
 ```
 

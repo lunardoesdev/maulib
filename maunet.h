@@ -88,7 +88,11 @@ typedef struct maunet_link_info {
     bool manual;   /* added directly with AddMaunetLink, not from a subscription */
     bool is_default;
     bool in_core;  /* currently registered in the running core */
-    unsigned delay_ms;
+    unsigned delay_ms;    /* total time to the last byte (TTLB) */
+    unsigned ttfb_ms;     /* time to the first byte; this is the ping */
+    unsigned ttlb_ms;
+    unsigned long long bytes;     /* body bytes the probe read */
+    unsigned long long speed_bps; /* body throughput */
     char last_error[MEWNET_ERROR_MAX];
 } maunet_link_info;
 

@@ -169,6 +169,10 @@ class MewnetDelayResult(ctypes.Structure):
         ("port", ctypes.c_int),
         ("url", ctypes.c_char * URL_MAX),
         ("delay_ms", ctypes.c_uint),
+        ("ttfb_ms", ctypes.c_uint),
+        ("ttlb_ms", ctypes.c_uint),
+        ("bytes", ctypes.c_ulonglong),
+        ("speed_bps", ctypes.c_ulonglong),
     ]
 
 
@@ -177,6 +181,23 @@ class MewnetPingResult(ctypes.Structure):
         ("ok", ctypes.c_bool),
         ("error", ctypes.c_int),
         ("delay_ms", ctypes.c_uint),
+        ("ttfb_ms", ctypes.c_uint),
+        ("ttlb_ms", ctypes.c_uint),
+        ("bytes", ctypes.c_ulonglong),
+        ("speed_bps", ctypes.c_ulonglong),
+    ]
+
+
+class MewnetProbeResult(ctypes.Structure):
+    _fields_ = [
+        ("ok", ctypes.c_bool),
+        ("error", MewnetError),
+        ("status", ctypes.c_int),
+        ("delay_ms", ctypes.c_uint),
+        ("ttfb_ms", ctypes.c_uint),
+        ("ttlb_ms", ctypes.c_uint),
+        ("bytes", ctypes.c_ulonglong),
+        ("speed_bps", ctypes.c_ulonglong),
     ]
 
 
@@ -307,6 +328,8 @@ class Mewnet:
             ctypes.POINTER(MewnetDelayOptions),
         ]
         lib.mewnet_test_link.restype = MewnetDelayResult
+        lib.mewnet_probe.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.c_int]
+        lib.mewnet_probe.restype = MewnetProbeResult
 
         lib.mewnet_link_options_default.argtypes = []
         lib.mewnet_link_options_default.restype = MewnetLinkOptions
@@ -460,6 +483,10 @@ class Mewnet:
             "port": info.port,
             "url": cstr(info.url),
             "delay": info.delay_ms,
+            "ttfb": info.ttfb_ms,
+            "ttlb": info.ttlb_ms,
+            "bytes": info.bytes,
+            "speed_bps": info.speed_bps,
         }
 
     @staticmethod
@@ -468,6 +495,10 @@ class Mewnet:
             "ok": bool(info.ok),
             "error": int(info.error),
             "delay": info.delay_ms,
+            "ttfb": info.ttfb_ms,
+            "ttlb": info.ttlb_ms,
+            "bytes": info.bytes,
+            "speed_bps": info.speed_bps,
         }
 
     @staticmethod
@@ -687,6 +718,21 @@ class Mewnet:
         result = self.lib.mewnet_test_link(self.instance, link.encode(), ctypes.byref(opts))
         return self._delay_dict(result)
 
+    def probe(self, url, expected=204, timeout_ms=3000):
+        result = self.lib.mewnet_probe(
+            self.instance, url.encode(), int(expected), int(timeout_ms)
+        )
+        return {
+            "ok": bool(result.ok),
+            "error": int(result.error.code),
+            "status": result.status,
+            "delay": result.delay_ms,
+            "ttfb": result.ttfb_ms,
+            "ttlb": result.ttlb_ms,
+            "bytes": result.bytes,
+            "speed_bps": result.speed_bps,
+        }
+
     def test_delay_async(self, name, options=None, timeout=10):
         opts = self._delay_options(options)
         return self._await_task(
@@ -840,7 +886,7 @@ class ApiTest(unittest.TestCase):
         self.assertEqual(used, 1, "sqlite must be built with FTS5")
 
     def test_01_version(self):
-        self.assertEqual(self.api.lib.mewnet_abi_version(), 2)
+        self.assertEqual(self.api.lib.mewnet_abi_version(), 3)
         self.assertEqual(self.api.lib.mewnet_version(), b"0.2.0")
 
     def test_02_status(self):

@@ -28,14 +28,18 @@ func mewnet_probe(instance *C.mewnet_instance, target *C.char, expected C.int, t
 		setCError(&out.error, err)
 		return out
 	}
-	status, delay, err := c.ProbeHTTP(C.GoString(target), int(expected), int(timeout_ms))
+	status, metrics, err := c.ProbeHTTP(C.GoString(target), int(expected), int(timeout_ms))
 	if err != nil {
 		setCError(&out.error, err)
 		return out
 	}
 	out.ok = true
 	out.status = C.int(status)
-	out.delay_ms = C.uint(delay)
+	out.delay_ms = C.uint(metrics.DelayMS)
+	out.ttfb_ms = C.uint(metrics.TTFBMS)
+	out.ttlb_ms = C.uint(metrics.TTLBMS)
+	out.bytes = C.ulonglong(metrics.Bytes)
+	out.speed_bps = C.ulonglong(metrics.SpeedBps)
 	out.error.code = C.MEWNET_ERROR_NONE
 	return out
 }

@@ -26,7 +26,9 @@ Build:
 export PATH="$HOME/.local/go/bin:$PATH"
 export GOPATH="$HOME/.cache/mewnet/gopath"
 export GOCACHE="$HOME/.cache/mewnet/gocache"
-make build
+CC=gcc CGO_ENABLED=1 go build -p=1 -trimpath -buildmode=c-shared \
+  -ldflags "-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33" \
+  -o dist/libmewnet.so .
 ```
 
 Result: `dist/libmewnet.so` — 55 MiB.
@@ -83,7 +85,7 @@ Covered:
 
 ## 4. C ABI
 
-Command: `make test-c`
+Command: `make -C tests test-c`
 
 ```
 PASS  abi version
@@ -110,7 +112,7 @@ The test is built with `#include "mewnet.h"` and links against `libmewnet.so`.
 Ping check from C through a local Xray:
 
 ```
-$ make test-c-ping-local
+$ make -C tests test-c-ping-local
 2
 ```
 
@@ -197,8 +199,8 @@ PASS  surviving links still work
 Build:
 
 ```bash
-make subs
-make test-subs
+make -C apps subs
+make -C tests test-subs
 ```
 
 CTest:
@@ -232,7 +234,7 @@ Verified manually:
 E2E:
 
 ```bash
-make test-e2e-subs
+make -C tests test-e2e-subs
 ```
 
 ```
@@ -252,7 +254,7 @@ through a local Xray (`alive=1`, `rating 0->1`, metadata), a dead proxy
 Build:
 
 ```bash
-make gui
+make -C apps gui
 ```
 
 Verified:
@@ -268,8 +270,8 @@ Verified:
 ## 10. mingw cross-compilation
 
 ```bash
-make build-mingw-core
-make subs-mingw
+make -C apps build-mingw-core
+make -C apps subs-mingw
 ```
 
 Produced:
@@ -341,7 +343,7 @@ build-mingw/apps/mewnet-watch/mewnet-watch.exe
 Build:
 
 ```bash
-make subs   # builds mewnet-gtk if gtk4.pc is found
+make -C apps subs   # builds mewnet-gtk if gtk4.pc is found
 ```
 
 Run on a fresh database, one public subscription, without Xray:
@@ -402,7 +404,7 @@ Verified:
 ### 12.1. Automated failover check
 
 ```bash
-make test-agent
+make -C tests test-agent
 ```
 
 The test is offline: a local `204` origin, three local HTTP proxies, a subscription
@@ -492,7 +494,7 @@ That is, the fetch is cancelled and does not block shutdown/health-check.
 ### 13.4. Shared agent
 
 `mewnet_agent` in `libmewnet` is used by GTK4 and CLI/TUI. The offline
-test `make test-agent` (previously `test-gtk-agent`) passes 19/19 on the CLI:
+test `make -C tests test-agent` (previously `test-gtk-agent`) passes 19/19 on the CLI:
 
 ```text
 bootstrap, pool growth, random switch across 3 nodes, health failover,
@@ -502,7 +504,7 @@ total outage, recovery, wait-for-subscription
 CLI/TUI:
 
 ```bash
-make cli
+make -C apps cli
 # s — random best proxy, q — quit
 ```
 
@@ -542,7 +544,7 @@ test suite, e2e with a local Xray, and a live CLI run on a public subscription.
 | OS | Ubuntu 24.04 (LTS) |
 | Kernel | 7.3.4-3-liquorix-amd64 |
 | libc | glibc 2.39 |
-| Compiler | gcc 13.3.0; clang 23.1.4 (mise) for `make test-c` |
+| Compiler | gcc 13.3.0; clang 23.1.4 (mise) for `make -C tests test-c` |
 | Go | 1.27.3 linux/amd64 (mise) |
 | CMake | 4.4.5 (mise) |
 | Python | 3.14.9 |
@@ -555,7 +557,7 @@ Build:
 mise install go@1.27.3 clang@23.1.4 cmake@4.4.5   # android-sdk/odin not needed
 CGO_ENABLED=1 CC=gcc go build -p=2 -trimpath -buildmode=c-shared \
   -ldflags "-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33" \
-  -o ../../dist/libmewnet.so ./cmd/mewnet
+  -o dist/libmewnet.so .
 ```
 
 Result: `dist/libmewnet.so` — 56 MiB, 115 exported `mewnet_*`.
@@ -563,9 +565,9 @@ Result: `dist/libmewnet.so` — 56 MiB, 115 exported `mewnet_*`.
 The applications were built with the system compiler:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+cmake -S apps -B build/apps -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_COMPILER=gcc -DMEWNET_BUILD_GTK=OFF
-cmake --build build -j2
+cmake --build build/apps -j1
 ```
 
 ### 14.2. Results
@@ -578,7 +580,7 @@ cmake --build build -j2
 | SharedVPNLink | `tests/python/test_links.py` | 14/14 |
 | C ABI | `tests/c/test_api.c` | 15 checks, all PASS |
 | Stress | `tests/python/test_stress.py` | 100 cycles, fd 10→10, goroutines 5→5 |
-| Subscriptions | `ctest` | 3/3 (base64, sha256, rating) |
+| Subscriptions | `make -C tests test-subs` | 3/3 (base64, sha256, rating) |
 | Agent/CLI offline | `tests/e2e/run_gtk_agent.py` | 19/19 |
 | E2E VLESS | `tests/e2e/run.py` | 18/18 |
 | E2E 4 proxies | `tests/e2e/run_links.py` | 39/39 |

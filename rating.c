@@ -79,11 +79,25 @@ static int select_proxy_link(mewnet_subs* db, int64_t proxy_id, char* link, size
 mewnet_subs_test_result mewnet_subs_record_test(mewnet_subs* db, int64_t proxy_id,
                                                bool alive, unsigned delay_ms,
                                                const char* error_text) {
+    return mewnet_subs_record_test_metrics(db, proxy_id, alive, delay_ms,
+                                           0, 0, 0, 0, error_text);
+}
+
+mewnet_subs_test_result mewnet_subs_record_test_metrics(mewnet_subs* db, int64_t proxy_id,
+                                                        bool alive, unsigned delay_ms,
+                                                        unsigned ttfb_ms, unsigned ttlb_ms,
+                                                        unsigned long long bytes,
+                                                        unsigned long long speed_bps,
+                                                        const char* error_text) {
     mewnet_subs_test_result result;
     memset(&result, 0, sizeof(result));
     result.proxy_id = proxy_id;
     result.alive = alive;
     result.delay_ms = delay_ms;
+    result.ttfb_ms = alive ? ttfb_ms : 0;
+    result.ttlb_ms = alive ? ttlb_ms : 0;
+    result.bytes = alive ? bytes : 0;
+    result.speed_bps = alive ? speed_bps : 0;
     if (error_text != NULL) {
         snprintf(result.test_error, sizeof(result.test_error), "%s", error_text);
     }
@@ -142,7 +156,9 @@ mewnet_subs_test_result mewnet_subs_record_test(mewnet_subs* db, int64_t proxy_i
 
     if (subs_db_prepare(db->db, &stmt,
                         "UPDATE proxies SET rating=?, last_up_day=?, last_down_day=?,"
-                        " alive=?, last_tested_at=?, last_delay_ms=?, last_error=?,"
+                        " alive=?, last_tested_at=?, last_delay_ms=?,"
+                        " last_ttfb_ms=?, last_ttlb_ms=?, last_bytes=?, last_speed_bps=?,"
+                        " last_error=?,"
                         " name=CASE WHEN ?<>'' THEN ? ELSE name END,"
                         " protocol=CASE WHEN ?<>'' THEN ? ELSE protocol END,"
                         " server=CASE WHEN ?<>'' THEN ? ELSE server END,"
@@ -159,16 +175,20 @@ mewnet_subs_test_result mewnet_subs_record_test(mewnet_subs* db, int64_t proxy_i
     sqlite3_bind_int(stmt, 4, alive ? 1 : 0);
     sqlite3_bind_int64(stmt, 5, now);
     sqlite3_bind_int64(stmt, 6, (int64_t)delay_ms);
-    subs_db_bind_text(stmt, 7, alive ? "" : result.test_error);
-    subs_db_bind_text(stmt, 8, result.name);
-    subs_db_bind_text(stmt, 9, result.name);
-    subs_db_bind_text(stmt, 10, result.protocol);
-    subs_db_bind_text(stmt, 11, result.protocol);
-    subs_db_bind_text(stmt, 12, result.server);
-    subs_db_bind_text(stmt, 13, result.server);
-    sqlite3_bind_int(stmt, 14, result.port);
-    sqlite3_bind_int(stmt, 15, result.port);
-    sqlite3_bind_int64(stmt, 16, proxy_id);
+    sqlite3_bind_int64(stmt, 7, (int64_t)result.ttfb_ms);
+    sqlite3_bind_int64(stmt, 8, (int64_t)result.ttlb_ms);
+    sqlite3_bind_int64(stmt, 9, (int64_t)result.bytes);
+    sqlite3_bind_int64(stmt, 10, (int64_t)result.speed_bps);
+    subs_db_bind_text(stmt, 11, alive ? "" : result.test_error);
+    subs_db_bind_text(stmt, 12, result.name);
+    subs_db_bind_text(stmt, 13, result.name);
+    subs_db_bind_text(stmt, 14, result.protocol);
+    subs_db_bind_text(stmt, 15, result.protocol);
+    subs_db_bind_text(stmt, 16, result.server);
+    subs_db_bind_text(stmt, 17, result.server);
+    sqlite3_bind_int(stmt, 18, result.port);
+    sqlite3_bind_int(stmt, 19, result.port);
+    sqlite3_bind_int64(stmt, 20, proxy_id);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) {
@@ -178,8 +198,9 @@ mewnet_subs_test_result mewnet_subs_record_test(mewnet_subs* db, int64_t proxy_i
     }
 
     if (subs_db_prepare(db->db, &stmt,
-                        "INSERT INTO test_events(proxy_id,ts,ok,delay_ms,error,"
-                        "rating_before,rating_after,rating_delta) VALUES(?,?,?,?,?,?,?,?)",
+                        "INSERT INTO test_events(proxy_id,ts,ok,delay_ms,ttfb_ms,ttlb_ms,"
+                        "bytes,speed_bps,error,rating_before,rating_after,rating_delta)"
+                        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                         &err) != 0) {
         sqlite3_exec(db->db, "ROLLBACK;", NULL, NULL, NULL);
         result.error = err;
@@ -189,10 +210,14 @@ mewnet_subs_test_result mewnet_subs_record_test(mewnet_subs* db, int64_t proxy_i
     sqlite3_bind_int64(stmt, 2, now);
     sqlite3_bind_int(stmt, 3, alive ? 1 : 0);
     sqlite3_bind_int64(stmt, 4, (int64_t)delay_ms);
-    subs_db_bind_text(stmt, 5, alive ? "" : result.test_error);
-    sqlite3_bind_int(stmt, 6, rating);
-    sqlite3_bind_int(stmt, 7, new_rating);
-    sqlite3_bind_int(stmt, 8, delta);
+    sqlite3_bind_int64(stmt, 5, (int64_t)result.ttfb_ms);
+    sqlite3_bind_int64(stmt, 6, (int64_t)result.ttlb_ms);
+    sqlite3_bind_int64(stmt, 7, (int64_t)result.bytes);
+    sqlite3_bind_int64(stmt, 8, (int64_t)result.speed_bps);
+    subs_db_bind_text(stmt, 9, alive ? "" : result.test_error);
+    sqlite3_bind_int(stmt, 10, rating);
+    sqlite3_bind_int(stmt, 11, new_rating);
+    sqlite3_bind_int(stmt, 12, delta);
     rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) {
@@ -263,13 +288,19 @@ static mewnet_subs_test_result test_link(mewnet_subs* db, mewnet_instance* mewne
         return result;
     }
 
-    result = mewnet_subs_record_test(db, proxy_id, true, tested.delay_ms, "");
+    result = mewnet_subs_record_test_metrics(db, proxy_id, true, tested.delay_ms,
+                                             tested.ttfb_ms, tested.ttlb_ms,
+                                             tested.bytes, tested.speed_bps, "");
     update_proxy_meta(db, proxy_id, &tested);
     snprintf(result.name, sizeof(result.name), "%s", tested.name);
     snprintf(result.protocol, sizeof(result.protocol), "%s", tested.proxy_type);
     snprintf(result.server, sizeof(result.server), "%s", tested.server);
     result.port = tested.port;
     result.delay_ms = tested.delay_ms;
+    result.ttfb_ms = tested.ttfb_ms;
+    result.ttlb_ms = tested.ttlb_ms;
+    result.bytes = tested.bytes;
+    result.speed_bps = tested.speed_bps;
     result.alive = true;
     return result;
 }
@@ -346,6 +377,13 @@ mewnet_error mewnet_subs_record_health(mewnet_subs* db, int64_t proxy_id, bool o
 
 mewnet_error mewnet_subs_record_health_delay(mewnet_subs* db, int64_t proxy_id, bool ok,
                                              unsigned delay_ms) {
+    return mewnet_subs_record_health_metrics(db, proxy_id, ok, delay_ms, 0, 0, 0, 0);
+}
+
+mewnet_error mewnet_subs_record_health_metrics(mewnet_subs* db, int64_t proxy_id, bool ok,
+                                               unsigned delay_ms, unsigned ttfb_ms,
+                                               unsigned ttlb_ms, unsigned long long bytes,
+                                               unsigned long long speed_bps) {
     if (db == NULL) {
         return subs_make_error(MEWNET_ERROR_INVALID_ARGUMENT, "db is required");
     }
@@ -355,14 +393,26 @@ mewnet_error mewnet_subs_record_health_delay(mewnet_subs* db, int64_t proxy_id, 
     if (subs_db_prepare(db->db, &stmt,
                         "UPDATE proxies SET health_failures=CASE WHEN ? THEN 0"
                         " ELSE health_failures+1 END,"
-                        " last_delay_ms=CASE WHEN ? THEN ? ELSE last_delay_ms END"
+                        " last_delay_ms=CASE WHEN ? THEN ? ELSE last_delay_ms END,"
+                        " last_ttfb_ms=CASE WHEN ? THEN ? ELSE last_ttfb_ms END,"
+                        " last_ttlb_ms=CASE WHEN ? THEN ? ELSE last_ttlb_ms END,"
+                        " last_bytes=CASE WHEN ? THEN ? ELSE last_bytes END,"
+                        " last_speed_bps=CASE WHEN ? THEN ? ELSE last_speed_bps END"
                         " WHERE id=?", &err) != 0) {
         return err;
     }
     sqlite3_bind_int(stmt, 1, ok ? 1 : 0);
     sqlite3_bind_int(stmt, 2, (ok && delay_ms > 0) ? 1 : 0);
     sqlite3_bind_int64(stmt, 3, (int64_t)delay_ms);
-    sqlite3_bind_int64(stmt, 4, proxy_id);
+    sqlite3_bind_int(stmt, 4, (ok && ttfb_ms > 0) ? 1 : 0);
+    sqlite3_bind_int64(stmt, 5, (int64_t)ttfb_ms);
+    sqlite3_bind_int(stmt, 6, (ok && ttlb_ms > 0) ? 1 : 0);
+    sqlite3_bind_int64(stmt, 7, (int64_t)ttlb_ms);
+    sqlite3_bind_int(stmt, 8, (ok && bytes > 0) ? 1 : 0);
+    sqlite3_bind_int64(stmt, 9, (int64_t)bytes);
+    sqlite3_bind_int(stmt, 10, (ok && speed_bps > 0) ? 1 : 0);
+    sqlite3_bind_int64(stmt, 11, (int64_t)speed_bps);
+    sqlite3_bind_int64(stmt, 12, proxy_id);
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
     if (rc != SQLITE_DONE) {

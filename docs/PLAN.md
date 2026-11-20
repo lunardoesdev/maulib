@@ -1,4 +1,4 @@
-# mewnet — FFI wrapper for mihomo on Linux
+# maulib — FFI wrapper for mihomo on Linux
 
 Status: implemented; see `README.md`, `docs/BUILD.md` and `docs/TEST_REPORT.md`.
 
@@ -53,26 +53,18 @@ Out of scope:
 ## 3. Architecture
 
 ```text
-mewnet/
-├── libs/mewnet/               Go core, c-shared libmewnet
-│   ├── go.mod
-│   ├── cmd/mewnet/            package main, cgo, //export
-│   ├── internal/core/         lifecycle, proxy management, tasks
-│   └── include/
-│       ├── mewnet.h           public functions
-│       └── mewnet_types.h     shared ABI structures
-├── libs/mewnet/cmd/mewnet/    single Go package: Go + subscriptions C + SQLite
-│   ├── mewnet_subs.h
-│   ├── src/                   SQLite, streaming ingest, rating, rate limit
-│   ├── tools/mewnet-subs.c    CLI
-│   └── tests/
-├── apps/gui/                  Odin + raylib GUI
-├── libs/mewnet/cmd/mewnet/sqlite3.c  amalgamation
+maulib/                        the repository is the library
+├── go.mod  go.sum             module of the library
+├── main.go  api.go  *.go      package main: cgo, //export
+├── *.c  *.h                   C API, subscriptions, SQLite, headers
+├── internal/core/             lifecycle, proxy management, tasks
+├── golib/                     importable Go API (no cgo)
+├── apps/                      clients, GUI, CMake, Makefile
 ├── tests/                     C, Python, e2e
-├── cmake/toolchains/          mingw toolchain
-├── Makefile
-├── LICENSE                    GPL-3.0
-└── docs/
+├── docs/
+├── assets/
+├── dist/                      build output
+└── LICENSE                    GPL-3.0
 ```
 
 ### One instance per process
@@ -246,22 +238,21 @@ export GOMODCACHE="$GOPATH/pkg/mod"
 Build:
 
 ```bash
-CGO_ENABLED=1 go build \
+CC=gcc CGO_ENABLED=1 go build \
   -trimpath \
   -buildmode=c-shared \
   -ldflags "-s -w -X github.com/metacubex/mihomo/constant.Version=v1.19.33" \
-  -o dist/libmewnet.so \
-  cd libs/mewnet && ./cmd/mewnet
+  -o dist/libmewnet.so .
 ```
 
 Notes:
 
 - by default without the `with_gvisor` tag (TUN/Tailscale are not needed);
 - if TUN is needed — a separate build with `-tags with_gvisor`;
-- little memory (~1.2 GB free), build with `-p=2`;
+- little memory (~1.2 GB free), build with `-p=1`;
 - glibc from Fedora 45 may not be suitable for older distributions; for
   distribution, build in an older base image;
-- artifacts: `.so`, `libs/mewnet/cmd/mewnet/mewnet.h`, sha256, `mewnet.pc`,
+- artifacts: `.so`, `mewnet.h`, sha256, `mewnet.pc`,
   C/Python examples; the mingw build is `dist/windows/mewnet.dll`.
 
 ## 6. Testing

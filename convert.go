@@ -128,6 +128,10 @@ func fillDelayResult(dst *C.mewnet_delay_result, src core.DelayResult) {
 	copyCString(dst.url[:], src.URL)
 	dst.port = C.int(src.Port)
 	dst.delay_ms = C.uint(src.Delay)
+	dst.ttfb_ms = C.uint(src.TTFB)
+	dst.ttlb_ms = C.uint(src.TTLB)
+	dst.bytes = C.ulonglong(src.Bytes)
+	dst.speed_bps = C.ulonglong(src.SpeedBps)
 }
 
 func failDelayResult(dst *C.mewnet_delay_result, err error) {
@@ -144,6 +148,10 @@ func fillPingResult(dst *C.mewnet_ping_result, src core.PingResult, err error) {
 	dst.ok = true
 	dst.error = C.MEWNET_ERROR_NONE
 	dst.delay_ms = C.uint(src.Delay)
+	dst.ttfb_ms = C.uint(src.TTFB)
+	dst.ttlb_ms = C.uint(src.TTLB)
+	dst.bytes = C.ulonglong(src.Bytes)
+	dst.speed_bps = C.ulonglong(src.SpeedBps)
 }
 
 func fillLinkTestResult(dst *C.mewnet_link_test_result, src core.DelayResult) {
@@ -155,6 +163,10 @@ func fillLinkTestResult(dst *C.mewnet_link_test_result, src core.DelayResult) {
 	copyCString(dst.server[:], src.Server)
 	dst.port = C.int(src.Port)
 	dst.delay_ms = C.uint(src.Delay)
+	dst.ttfb_ms = C.uint(src.TTFB)
+	dst.ttlb_ms = C.uint(src.TTLB)
+	dst.bytes = C.ulonglong(src.Bytes)
+	dst.speed_bps = C.ulonglong(src.SpeedBps)
 }
 
 func failLinkTestResult(dst *C.mewnet_link_test_result, err error) {

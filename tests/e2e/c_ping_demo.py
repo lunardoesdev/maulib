@@ -20,7 +20,7 @@ from run_links import start_xray  # noqa: E402
 def main():
     binary = os.path.join(ROOT, "dist", "test_ping")
     if not os.path.exists(binary):
-        print(f"SKIP: {binary} not built (run: make test-c-ping)")
+        print(f"SKIP: {binary} not built (run: make -C tests test-c-ping)")
         return 2
 
     workdir = tempfile.mkdtemp(prefix="mewnet-c-ping-")

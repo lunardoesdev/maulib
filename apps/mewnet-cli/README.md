@@ -4,7 +4,7 @@ CLI/TUI front-end for the shared `libmewnet` discovery agent. No extra
 dependencies: POSIX terminal + ANSI, the same engine as the GTK4 app.
 
 ```bash
-make cli
+make -C apps cli          # from the repository root
 ./build/apps/mewnet-cli/mewnet-cli --db data/mewnet-cli.db --proxy-port 18085
 ```
 

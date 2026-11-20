@@ -221,11 +221,11 @@ static void agent_emit_state(mewnet_agent* agent) {
     }
 }
 
-static bool agent_health_check(mewnet_agent* agent, unsigned* delay_ms) {
+static bool agent_health_check(mewnet_agent* agent, mewnet_probe_result* out) {
     char name[MEWNET_NAME_MAX];
     agent_copy_current(agent, NULL, name, sizeof(name), NULL, 0, NULL, 0, NULL, NULL, NULL);
-    if (delay_ms != NULL) {
-        *delay_ms = 0;
+    if (out != NULL) {
+        memset(out, 0, sizeof(*out));
     }
     if (name[0] == '\0') {
         return false;
@@ -233,8 +233,8 @@ static bool agent_health_check(mewnet_agent* agent, unsigned* delay_ms) {
     int expected = atoi(agent->health_expected);
     mewnet_probe_result result = mewnet_probe(agent->cfg.milib, agent->health_url,
                                               expected, agent->cfg.health_timeout_ms);
-    if (result.ok && delay_ms != NULL) {
-        *delay_ms = (unsigned)result.delay_ms;
+    if (out != NULL) {
+        *out = result;
     }
     return result.ok;
 }
@@ -317,14 +317,6 @@ static bool agent_run_batch(mewnet_agent* agent, const char* reason, bool route_
     return agent_run_batch_db(agent, agent->cfg.db, reason, route_found);
 }
 
-static bool agent_route_by_id(mewnet_agent* agent, int64_t id) {
-    mewnet_subs_proxy proxy = agent_get_proxy(agent, id);
-    if (proxy.id == 0) {
-        return false;
-    }
-    return agent_route(agent, &proxy);
-}
-
 static bool agent_run_batch_db(mewnet_agent* agent, mewnet_subs* db,
                                const char* reason, bool route_found) {
     mewnet_subs_batch_test_result tested =
@@ -337,12 +329,17 @@ static bool agent_run_batch_db(mewnet_agent* agent, mewnet_subs* db,
     agent_log(agent, "BATCH reason=%s tested=%zu alive=%zu", reason,
               tested.tested, tested.alive);
     agent_invalidate_counts(agent);
-    if (tested.alive > 0 && tested.first_alive_proxy_id != 0) {
+    if (tested.alive > 0) {
         if (!route_found) {
             agent_log(agent, "DISCOVERED id=%lld", (long long)tested.first_alive_proxy_id);
             return true;
         }
-        return agent_route_by_id(agent, tested.first_alive_proxy_id);
+        /* Activate the best measured node, not whichever finished first:
+         * first_alive ranks by health_failures, rating, TTFB and speed. */
+        mewnet_subs_proxy best;
+        if (mewnet_subs_first_alive(db, agent->cfg.group_id, &best).code == MEWNET_ERROR_NONE) {
+            return agent_route(agent, &best);
+        }
     }
     return false;
 }
@@ -708,8 +705,10 @@ static void* agent_thread_main(void* data) {
         }
 
         if (now >= agent->next_health_ms) {
-            unsigned delay_ms = 0;
-            bool healthy = agent_health_check(agent, &delay_ms);
+            mewnet_probe_result probe;
+            memset(&probe, 0, sizeof(probe));
+            bool healthy = agent_health_check(agent, &probe);
+            unsigned delay_ms = (unsigned)probe.delay_ms;
             agent->health_history = ((agent->health_history << 1) | (healthy ? 0u : 1u)) & 0x07u;
             unsigned recent_failures = 0;
             for (unsigned bits = agent->health_history; bits != 0; bits >>= 1) {
@@ -719,7 +718,14 @@ static void* agent_thread_main(void* data) {
                 int64_t current = 0;
                 agent_copy_current(agent, &current, NULL, 0, NULL, 0, NULL, 0, NULL, NULL, NULL);
                 if (current != 0) {
-                    mewnet_subs_record_health_delay(agent->cfg.db, current, true, delay_ms);
+                    mewnet_subs_record_health_metrics(
+                        agent->cfg.db, current, true, delay_ms, probe.ttfb_ms,
+                        probe.ttlb_ms, probe.bytes, probe.speed_bps);
+                    if (delay_ms > 0) {
+                        agent_log(agent, "HEALTH id=%lld ttfb=%ums ttlb=%ums speed=%lluB/s",
+                                  (long long)current, probe.ttfb_ms, probe.ttlb_ms,
+                                  probe.speed_bps);
+                    }
                 }
                 if (delay_ms > 0) {
                     /* EWMA with a 1/4 weight: a single spike must not count. */
@@ -746,7 +752,7 @@ static void* agent_thread_main(void* data) {
                 int64_t current = 0;
                 agent_copy_current(agent, &current, NULL, 0, NULL, 0, NULL, 0, NULL, NULL, NULL);
                 if (current != 0) {
-                    mewnet_subs_record_health_delay(agent->cfg.db, current, false, 0);
+                    mewnet_subs_record_health_metrics(agent->cfg.db, current, false, 0, 0, 0, 0, 0);
                 }
                 agent->slow_streak = 0;
                 agent_log(agent, "HEALTH FAIL recent=%u/3", recent_failures);

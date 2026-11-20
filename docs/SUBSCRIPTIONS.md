@@ -12,18 +12,16 @@ The C part of subscriptions, SQLite and the discovery agent ship in a single `li
 
 ## Build
 
+Build the library once, as shown in [BUILD.md](BUILD.md); then:
+
 ```bash
-make deps          # mise install: go, odin, android-sdk, clang, cmake
-make build         # dist/libmewnet.so
-make subs          # dist/libmewnet.so + build/apps/mewnet-subs/mewnet-subs
-make test-subs     # ctest
+make -C apps subs           # build/apps/mewnet-subs/mewnet-subs
+make -C tests test-subs     # base64, sha256, rating, groups
 ```
 
-CMake uses:
-
-- `mewnet` from `dist/libmewnet.so`;
-- the SQLite amalgamation inside `libs/mewnet/cmd/mewnet` (public domain);
-- clang from mise.
+The clients link `dist/libmewnet.so`; the SQLite amalgamation is compiled into
+it from the repository root (public domain). `apps/Makefile` uses clang from
+mise.
 
 ## CLI
 
@@ -163,7 +161,9 @@ subscriptions(
 proxies(
   id, group_id, link, link_hash, identity_hash, name, protocol,
   server, port, rating, health_failures, alive, manual,
-  last_tested_at, last_delay_ms, last_error, last_up_day, last_down_day,
+  last_tested_at, last_delay_ms,
+  last_ttfb_ms, last_ttlb_ms, last_bytes, last_speed_bps,
+  last_error, last_up_day, last_down_day,
   UNIQUE(group_id, link_hash)
 )
 -- plus UNIQUE(group_id, identity_hash): the deduplication key
@@ -174,7 +174,8 @@ proxy_sources(
 )
 
 test_events(
-  id, proxy_id, ts, ok, delay_ms, error,
+  id, proxy_id, ts, ok, delay_ms,
+  ttfb_ms, ttlb_ms, bytes, speed_bps, error,
   rating_before, rating_after, rating_delta
 )
 ```
@@ -190,6 +191,24 @@ cache and `temp_store=FILE` are enabled on every connection.
 `proxies.health_failures` is the rolling health signal used for routing: it does
 not change `alive`.
 
+## Metrics
+
+Every availability check — discovery batches, manual link tests and the active
+node's health check — stores the same measurements:
+
+| Column | Meaning |
+|---|---|
+| `last_delay_ms` | total time to the last byte (TTLB), the classic "delay" |
+| `last_ttfb_ms` | time to the first response byte; this is the ping |
+| `last_ttlb_ms` | time to the last byte |
+| `last_bytes` | body bytes the probe read (capped at 64 KiB) |
+| `last_speed_bps` | body throughput: bytes over `ttlb - ttfb` |
+
+There is no ICMP probe: `last_ttfb_ms` is the network/HTTP latency and is what
+"ping" means here. The default test URL (`generate_204`) returns an empty body,
+so `last_bytes` and `last_speed_bps` stay 0; point `test_url` at a URL with a
+payload if you want a throughput number to participate in selection.
+
 ## Rating
 
 On success:
@@ -204,9 +223,29 @@ On failure:
 
 The limits are independent: in one day a proxy can get both `+1` and `-1`.
 
-## Candidate selection
+## Active proxy selection
 
-Candidates are selected **randomly, weighted by proxy rating**:
+The agent does not pick "a random best-rated node". Alive proxies are ranked by
+a weighted score over the stored metrics:
+
+```text
+score = 0.40 * rating_score
+      + 0.40 * latency_score
+      + 0.20 * speed_score
+
+rating_score  = clamp((rating + 20) / 40, 0, 1)
+latency_score = min_ttfb_in_pool / this_ttfb   (TTLB if TTFB is missing)
+speed_score   = this_speed / max_speed_in_pool (0.5 when no body was measured)
+```
+
+`health_failures` still dominates: proxies with failures sort after clean ones.
+The top five by score are then sampled randomly, so equal nodes rotate. The
+`exclude_id`/`avoid_id` arguments keep the current and the previous node out.
+
+## Discovery candidate selection
+
+Candidates for the *next test* are selected **randomly, weighted by proxy
+rating** (this is about what to test, not what to route through):
 
 ```text
 weight = 1 + max(0, rating + 10)
@@ -309,7 +348,7 @@ Library APIs for this:
 ## GTK4 control panel: `mewnet-gtk`
 
 ```bash
-make gtk
+make -C apps gtk
 ./build/apps/mewnet-gtk/mewnet-gtk --db data/mewnet-gtk.db --proxy-port 18085 \
   https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub
 ```

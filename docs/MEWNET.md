@@ -12,8 +12,8 @@ Use it when you need:
 - control over which proxy the shared inbound uses, per instance;
 - storage calls without the maunet façade.
 
-Headers: [`mewnet.h`](../libs/mewnet/cmd/mewnet/mewnet.h),
-[`mewnet_subs.h`](../libs/mewnet/cmd/mewnet/mewnet_subs.h). Everything here is
+Headers: [`mewnet.h`](../mewnet.h),
+[`mewnet_subs.h`](../mewnet_subs.h). Everything here is
 part of the same `dist/libmewnet.so`.
 
 ## How it fits together
@@ -105,7 +105,9 @@ curl --socks5-hostname 127.0.0.1:<link_port> \
 ```
 
 `mewnet_link_ping`, `mewnet_link_speed` and `mewnet_link_exit_ip` also measure
-this link specifically, regardless of which proxy is selected.
+this link specifically, regardless of which proxy is selected. A ping result
+carries the same metrics as every other availability check: `ttfb_ms` (the ping),
+`ttlb_ms`, `bytes` and `speed_bps`; `delay_ms` is the TTLB.
 
 To make the link the **main** proxy as well — the one the shared inbound uses —
 pass the handle instead of looking the name up:
@@ -205,7 +207,7 @@ mewnet_add_proxy(m, "vless://...", &add);
 Compile:
 
 ```bash
-cc app.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet -Wl,-rpath,"$PWD/dist" -o app
+cc app.c -I. -Ldist -lmewnet -Wl,-rpath,"$PWD/dist" -o app
 ./app
 ```
 
@@ -269,7 +271,7 @@ migrated automatically), tests them under a shared rate limit, rates them
 proxy when the active one dies.
 
 ```bash
-make subs
+make -C apps subs
 ./build/apps/mewnet-subs/mewnet-subs --db data/subs.db sub add URL 0 name
 ./build/apps/mewnet-subs/mewnet-subs --db data/subs.db run --limit 10 --window 240
 ```
@@ -283,7 +285,7 @@ mixed port. In your own program the same pieces are `mewnet_subs_*` plus
 ## C API: subscriptions, storage and the agent
 
 Everything here is declared in
-[`mewnet_subs.h`](../libs/mewnet/cmd/mewnet/mewnet_subs.h) and ships inside
+[`mewnet_subs.h`](../mewnet_subs.h) and ships inside
 `libmewnet`. SQLite is compiled in (FTS5 included): `mewnet_subs_open` creates
 the file, migrates the schema and sets up WAL, so there is no separate storage
 library and no SQL to run at install time.
@@ -291,7 +293,7 @@ library and no SQL to run at install time.
 The examples below are complete programs. Each one compiles with:
 
 ```bash
-cc example.c -Ilibs/mewnet/cmd/mewnet -Ldist -lmewnet \
+cc example.c -I. -Ldist -lmewnet \
    -Wl,-rpath,"$PWD/dist" -o example
 ```
 
@@ -721,7 +723,7 @@ works, prints `PROXY http://127.0.0.1:<port>`.
 node, watch the discovery log.
 
 **`mewnet-gui`** — a small Odin/raylib GUI for browsing groups and paging
-through proxies (`make gui`).
+through proxies (`make -C apps gui`).
 
 **`mewnet-discovery`** — a probe for the discovery pipeline itself. It fetches
 subscriptions and grows the pool in three stages: wide batches until the first
@@ -731,7 +733,7 @@ rate, protocol mix, delay percentiles, and finally routes traffic through the
 best node to prove it works:
 
 ```bash
-make subs
+make -C apps subs
 ./build/apps/mewnet-discovery/mewnet-discovery --db data/discovery.db \
   --fast 8 --bulk 100 --run-seconds 300 \
   https://raw.githubusercontent.com/mahdibland/V2RayAggregator/master/sub/sub_merge.txt \

@@ -91,6 +91,10 @@ Mewnet_Subs_Proxy_Summary :: struct {
 	manual:          bool,
 	last_tested_at:  i64,
 	last_delay_ms:   c.uint,
+	last_ttfb_ms:    c.uint,
+	last_ttlb_ms:    c.uint,
+	last_bytes:      u64,
+	last_speed_bps:  u64,
 	last_error:      [MEWNET_ERROR_MAX]u8,
 }
 
@@ -113,6 +117,10 @@ Mewnet_Subs_Proxy :: struct {
 	manual:          bool,
 	last_tested_at:  i64,
 	last_delay_ms:   c.uint,
+	last_ttfb_ms:    c.uint,
+	last_ttlb_ms:    c.uint,
+	last_bytes:      u64,
+	last_speed_bps:  u64,
 	last_error:      [MEWNET_ERROR_MAX]u8,
 }
 
@@ -124,7 +132,7 @@ Mewnet_Subs_Stats :: struct {
 	tests:         i64,
 }
 
-foreign import mewnet_subs "system:mewnet_subs"
+foreign import mewnet_subs "system:mewnet"
 
 @(default_calling_convention="c")
 foreign mewnet_subs {

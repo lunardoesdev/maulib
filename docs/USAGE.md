@@ -3,15 +3,15 @@
 Practical guide to the library: how to start the core, add and switch proxies,
 measure them, and keep a working proxy selected. For the build itself see
 [`BUILD.md`](BUILD.md); for the full function list see
-[`../libs/mewnet/cmd/mewnet/mewnet.h`](../libs/mewnet/cmd/mewnet/mewnet.h).
+[`../mewnet.h`](../mewnet.h).
 
 Everything below assumes you have:
 
 ```text
 dist/libmewnet.so
-libs/mewnet/cmd/mewnet/mewnet.h          core API
-libs/mewnet/cmd/mewnet/mewnet_types.h    structs and enums
-libs/mewnet/cmd/mewnet/mewnet_subs.h     subscriptions + discovery agent
+mewnet.h          core API
+mewnet_types.h    structs and enums
+mewnet_subs.h     subscriptions + discovery agent
 ```
 
 Link with `-Ldist -lmewnet` and run with `LD_LIBRARY_PATH=dist` (or an rpath).
@@ -349,7 +349,7 @@ Points that bite:
 ## Go
 
 The core is importable without cgo; see
-[`../libs/mewnet/README.md`](../libs/mewnet/README.md).
+[`GO_API.md`](GO_API.md).
 
 ## Subscriptions
 
@@ -428,7 +428,7 @@ worker do not block each other.
 |---|---|
 | `subscription_groups` | groups; the default `All` group is created automatically |
 | `subscriptions` | URL, fetch schedule, ETag/Last-Modified, failure count |
-| `proxies` | parsed configs, rating, alive flag, last delay, health signal |
+| `proxies` | parsed configs, rating, alive flag, TTFB/TTLB/speed metrics, health signal |
 | `proxy_sources` | which subscription last saw a config (generation cleanup) |
 | `test_events` | every test result with the rating before and after |
 
@@ -437,7 +437,7 @@ The file is ordinary SQLite, so any tool can read it while your app runs:
 ```bash
 sqlite3 data/subs.db '.tables'
 sqlite3 data/subs.db 'SELECT protocol, COUNT(*), SUM(alive) FROM proxies GROUP BY protocol;'
-sqlite3 data/subs.db 'SELECT name, rating, last_delay_ms FROM proxies ORDER BY rating DESC LIMIT 5;'
+sqlite3 data/subs.db 'SELECT name, rating, last_ttfb_ms, last_speed_bps FROM proxies ORDER BY rating DESC LIMIT 5;'
 ```
 
 Do not write to it from another process while the agent is running — go through

@@ -600,6 +600,10 @@ maunet_link_info GetMaunetLink(int64_t link_id) {
     info.alive = row.alive;
     info.manual = row.manual;
     info.delay_ms = row.last_delay_ms;
+    info.ttfb_ms = row.last_ttfb_ms;
+    info.ttlb_ms = row.last_ttlb_ms;
+    info.bytes = row.last_bytes;
+    info.speed_bps = row.last_speed_bps;
     copy_text(info.last_error, sizeof(info.last_error), row.last_error, "");
     info.in_core = mewnet_has_proxy(g.core, row.name);
     info.is_default = g.default_link == link_id;
@@ -650,6 +654,10 @@ maunet_link_list LoadMaunetLinks(size_t limit, size_t offset) {
         info->alive = row->alive;
         info->manual = row->manual;
         info->delay_ms = row->last_delay_ms;
+        info->ttfb_ms = row->last_ttfb_ms;
+        info->ttlb_ms = row->last_ttlb_ms;
+        info->bytes = row->last_bytes;
+        info->speed_bps = row->last_speed_bps;
         copy_text(info->last_error, sizeof(info->last_error), row->last_error, "");
         info->in_core = mewnet_has_proxy(g.core, row->name);
         info->is_default = g.default_link == row->id;

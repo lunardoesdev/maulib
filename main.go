@@ -332,6 +332,10 @@ func mewnet_test_link_info(instance *C.mewnet_instance, uri *C.char, options *C.
 	copyCString(out.server[:], result.Server)
 	out.port = C.int(result.Port)
 	out.delay_ms = C.uint(result.Delay)
+	out.ttfb_ms = C.uint(result.TTFB)
+	out.ttlb_ms = C.uint(result.TTLB)
+	out.bytes = C.ulonglong(result.Bytes)
+	out.speed_bps = C.ulonglong(result.SpeedBps)
 	return out
 }
 

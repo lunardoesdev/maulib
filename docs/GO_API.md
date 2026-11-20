@@ -1,10 +1,10 @@
-# mewnet Go API
+# maulib Go API
 
-Importable Go API for the mihomo-backed core. It wraps `internal/core` and
-does not require cgo.
+Importable Go API for the mihomo-backed core, in `golib/`. It wraps
+`internal/core` and does not require cgo.
 
 ```go
-import "mewnet"
+import "mewnet/golib"
 
 client, err := mewnet.Start(mewnet.Config{
     MixedPort: -1,       // -1 disable, 0 free port/YAML, >0 exact
@@ -28,6 +28,10 @@ delay, err := client.TestDelay(added.Added[0].Name, mewnet.DelayOptions{
     TimeoutMS: 5000,
 })
 ```
+
+`DelayResult` carries `Delay` (total time to the last byte), `TTFB` (time to the
+first byte — the ping), `TTLB`, `Bytes` and `SpeedBps`. They are collected on
+every test, including the batch variants below.
 
 ## Batch checks
 

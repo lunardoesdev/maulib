@@ -60,13 +60,23 @@ mewnet_delay_result mewnet_test_link(mewnet_instance* instance,
  */
 mewnet_fingerprint_result mewnet_link_fingerprint(const char* uri);
 
-/* GET a URL through the local mixed inbound (real client path). */
+/*
+ * GET a URL through the local mixed inbound (real client path).
+ *
+ * The result also carries the metrics stored by the agent: `ttfb_ms` (time to
+ * the first byte; this is the ping), `ttlb_ms` (time to the last byte),
+ * `bytes` (body bytes read, capped at 64 KiB) and `speed_bps` (body throughput).
+ * `delay_ms` stays the total TTLB, as before.
+ */
 mewnet_probe_result mewnet_probe(mewnet_instance* instance,
                                  const char* url,
                                  int expected_status,
                                  int timeout_ms);
 
-/* Parse and test a raw share link, returning metadata and a detailed error. */
+/*
+ * Parse and test a raw share link, returning metadata and a detailed error.
+ * The result carries the same TTFB/TTLB/bytes/speed metrics as mewnet_probe().
+ */
 mewnet_link_test_result mewnet_test_link_info(mewnet_instance* instance,
                                             const char* uri,
                                             const mewnet_delay_options* options);
