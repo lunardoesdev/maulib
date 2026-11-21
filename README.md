@@ -7,17 +7,20 @@ One library: **`libmewnet.so`**, a proxy core that runs **inside your process** 
 No daemon, no control port, no JSON.
 
 The API you normally use is **maunet**: global state, and everything is a link id.
-You build the library, call `InitMaunet`, add links or subscriptions, pick the
-default link, and your program sends traffic through `127.0.0.1:<port>`.
+You build the library, call `InitMaunet` with `run_agent = true`, add a
+subscription, and the background agent automatically tests configs, keeps a
+working proxy selected and fails over — your program just sends traffic through
+`127.0.0.1:<port>`.
 
 ```c
 maunet_settings s = MaunetSettingsDefault();
 s.db_path = "data/app.db";
+s.run_agent = true;
 InitMaunet(&s);
 
-int64_t id = AddMaunetLink("vless://...").id;
-SetMaunetLinkAsDefault(id);
-/* http://127.0.0.1:<GetMaunetProxyPort()> now exits through that link */
+AddMaunetSubscription("https://example.com/sub.txt");
+/* the agent tests configs, selects a working link and keeps it alive;
+   http://127.0.0.1:<GetMaunetProxyPort()> exits through GetMaunetDefaultLink() */
 
 DeinitMaunet();
 ```
@@ -58,38 +61,41 @@ from mise (`mise exec -- clang ...`).
 
 ## Your first program
 
+The primary mode is automatic (`run_agent = true`): you hand `maunet` a
+subscription and let the discovery agent test configs, pick the best working
+node, health-check it and fail over.
+
 `hello.c`:
 
 ```c
 #include <stdio.h>
+#include <unistd.h>
 #include "maunet.h"
 
 int main(void) {
     maunet_settings settings = MaunetSettingsDefault();
     settings.db_path = "data/hello.db";   /* created and migrated on init */
     settings.mixed_port = 18085;          /* 0 = any free port, -1 = no inbound */
-    settings.run_agent = true;            /* keep a working link in the background */
+    settings.run_agent = true;            /* automatic discovery, selection and failover */
 
     if (!InitMaunet(&settings)) {
         fprintf(stderr, "init: %s\n", GetMaunetError());
         return 1;
     }
 
-    /* A subscription is a source of links; a single link can be added directly. */
+    /* Add a subscription; its configs are stored as links and tested by the agent. */
     maunet_link_result sub = AddMaunetSubscription("https://example.com/sub.txt");
     printf("subscription %lld, %lld links\n", (long long)sub.id,
            (long long)GetMaunetLinkCount());
 
-    maunet_link_result manual = AddMaunetLink("vless://...");
-    if (manual.id > 0 && SetMaunetLinkAsDefault(manual.id)) {
-        printf("use http://127.0.0.1:%d through %s\n", GetMaunetProxyPort(),
-               GetMaunetLink(manual.id).name);
+    /* Wait for the agent to find and select a working link. */
+    while (GetMaunetDefaultLink() == 0) {
+        usleep(200 * 1000);
     }
 
-    /* Measure one link; alive, delay and rating are stored with it. */
-    if (!TestMaunetLink(manual.id)) {
-        printf("link is not usable: %s\n", GetMaunetError());
-    }
+    maunet_link_info active = GetMaunetLink(GetMaunetDefaultLink());
+    printf("use http://127.0.0.1:%d through [%lld] %s (%u ms)\n",
+           GetMaunetProxyPort(), (long long)active.id, active.name, active.ttfb_ms);
 
     maunet_status status = GetMaunetStatus();
     printf("%lld links, %lld alive, selected %s\n", (long long)status.links,
@@ -136,16 +142,19 @@ All headers live in the repository root, next to the sources.
 ## How it works
 
 ```text
-AddMaunetLink / AddMaunetSubscription
+AddMaunetSubscription / AddMaunetLink
                 │  every link is one row in SQLite and gets an id
                 ▼
-          link id ──SetMaunetLinkAsDefault──► selected link in the core
-                                                    │
-        your app / curl ──► 127.0.0.1:<port> ────────┘
+          link id ──agent (run_agent = true)──► selected link in the core
+                  (or SetMaunetLinkAsDefault                   │
+                   when run_agent = false)                     │
+                                                               │
+        your app / curl ──► 127.0.0.1:<port> ──────────────────┘
 ```
 
 - **One hidden instance per process.** `InitMaunet` opens the database, starts
-  mihomo and, if asked, the discovery agent. `DeinitMaunet` tears it down.
+  mihomo and, with `run_agent = true`, the discovery agent. `DeinitMaunet` tears
+  it down.
 - **The mixed inbound is the door.** HTTP and SOCKS5 on the same port; traffic
   leaves through the selected link. Switching links is instant for new
   connections, open ones finish on the old link.
@@ -157,11 +166,17 @@ AddMaunetLink / AddMaunetSubscription
 - **Duplicates never duplicate.** Adding a link that is already stored — same
   text, or the same server and credentials under another name or with different
   transport options — returns the id of the existing link.
-- **The agent is optional.** With `run_agent = true` it tests configs, keeps a
-  pool of working links and fails over when the active one dies;
-  `GetMaunetDefaultLink` follows those switches. Alive links are ranked by a
-  weighted score — 40 % rating, 40 % TTFB, 20 % speed — and the top five are
-  sampled randomly, so selection is not "the best rating" alone.
+- **Automatic selection (`run_agent = true`) is the primary mode.** The agent
+  tests configs in the background, keeps a pool of working links, selects the
+  active node, health-checks it every 6 s, fails over when it dies, and swaps
+  away when it is much slower than the pool; `GetMaunetDefaultLink()` follows
+  those switches. Alive links are ranked by a weighted score — 40 % rating,
+  40 % TTFB, 20 % speed — and the top five are sampled randomly, so selection is
+  not "the best rating" alone.
+- **Manual selection (`run_agent = false`) is for fixed links.** When the agent
+  is off, you pick the active link yourself with `SetMaunetLinkAsDefault(id)`.
+  Do not call `SetMaunetLinkAsDefault` while `run_agent = true` — see
+  **Automatic vs manual selection** below.
 
 Per-link SOCKS5 endpoints with their own credentials (one exit per consumer)
 are a lower-level feature, see [`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.md).
@@ -214,9 +229,10 @@ are a lower-level feature, see [`docs/SHARED_VPN_LINK.md`](docs/SHARED_VPN_LINK.
 - `AddMaunetSubscription(url)` — store and fetch a subscription; its configs
   appear as links. The subscription is kept even if the fetch fails.
 - `RemoveMaunetLink(id)` / `RemoveMaunetSubscription(id)` — delete.
-- `SetMaunetLinkAsDefault(id)` — register the link in the core and select it.
 - `GetMaunetDefaultLink()` — id of the selected link, `0` if none; follows the
-  agent.
+  agent when `run_agent = true`.
+- `SetMaunetLinkAsDefault(id)` — manual mode (`run_agent = false` only): register
+  the link in the core and select it. Do not call while the agent is running.
 - `TestMaunetLink(id)` — measure through the tunnel, update rating and `alive`.
 - `GetMaunetLink(id)` — one `maunet_link_info`.
 - `LoadMaunetLinks(limit, offset)` / `UnloadMaunetLinks(list)` — page through
@@ -241,7 +257,52 @@ byte), `bytes` read (capped at 64 KiB) and `speed_bps` (body bytes over
 
 ### Recipes
 
-Find a working link and route through it:
+#### Automatic mode (`run_agent = true`, recommended)
+
+Let the agent test subscriptions, pick the best node and fail over automatically:
+
+```c
+maunet_settings s = MaunetSettingsDefault();
+s.db_path = "data/app.db";
+s.mixed_port = 18085;
+s.run_agent = true;
+s.pool_target = 12;          /* keep 12 working links in reserve */
+s.slow_factor = 3;           /* swap if active is >3x slower than pool median (-1 disables) */
+s.slow_floor_ms = 1000;      /* ... and at least 1000 ms */
+InitMaunet(&s);
+
+AddMaunetSubscription("https://example.com/sub.txt");
+
+/* Poll until the agent activates a working link. */
+while (GetMaunetDefaultLink() == 0) {
+    usleep(200 * 1000);
+}
+maunet_link_info active = GetMaunetLink(GetMaunetDefaultLink());
+printf("active: [%lld] %s (%u ms)\n",
+       (long long)active.id, active.name, active.ttfb_ms);
+```
+
+#### Manual mode (`run_agent = false`)
+
+When `run_agent = false`, there is no background thread and you control which
+link is selected with `SetMaunetLinkAsDefault(id)`.
+
+Add a single link and route through it immediately:
+
+```c
+maunet_settings s = MaunetSettingsDefault();
+s.db_path = "data/manual.db";
+s.mixed_port = 18085;
+s.run_agent = false;
+InitMaunet(&s);
+
+maunet_link_result manual = AddMaunetLink("vless://...");
+if (manual.id > 0 && TestMaunetLink(manual.id)) {
+    SetMaunetLinkAsDefault(manual.id);
+}
+```
+
+Or scan stored links yourself, pick the first working one and switch later by id:
 
 ```c
 maunet_link_list list = LoadMaunetLinks(100, 0);
@@ -252,19 +313,70 @@ for (size_t i = 0; i < list.count; i++) {
     }
 }
 UnloadMaunetLinks(list);
-```
 
-Switch later, by id:
-
-```c
+/* Switch later, by id: */
 if (SetMaunetLinkAsDefault(other_id)) {
     printf("now exiting through %s\n", GetMaunetLink(other_id).name);
 }
 ```
 
-Keep the selection healthy without writing any logic: set `run_agent = true`.
-The agent tests configs in the background and switches when the active link
-stops answering; `GetMaunetDefaultLink()` always reports what is in use.
+## Automatic proxy selection vs `SetMaunetLinkAsDefault`
+
+There are two ways to run automatic selection in the C API:
+
+1. **Background agent (`maunet.h`)** — set `settings.run_agent = true` before
+   `InitMaunet(&settings)`. The discovery agent runs in its own threads: it
+   fetches subscriptions, tests configs in batches until it finds a working node,
+   selects the best one in the core, grows a reserve pool (`pool_target`, default
+   12), health-checks the active link every 6 s, fails over after 2 failures out
+   of 3, and replaces an active link that stays slower than `slow_factor` times
+   the pool median (and above `slow_floor_ms`) for `slow_checks` checks in a row.
+2. **Lower-level handle API (`mewnet_subs.h`)** — start the same agent explicitly
+   with `mewnet_agent_start(&agent_config, callbacks)` (gives you log/state
+   callbacks and `mewnet_agent_request_switch(agent)` to ask the agent for
+   another random top node), or pick a node on demand with
+   `mewnet_subs_test_batch` + `mewnet_subs_random_best_alive` /
+   `mewnet_subs_first_alive`.
+
+Alive candidates are ranked by a weighted score over the stored metrics:
+
+```text
+score = 0.40 * rating   (normalised over -20..+20)
+      + 0.40 * latency  (best TTFB in the pool / this TTFB)
+      + 0.20 * speed    (this throughput / best throughput in the pool)
+```
+
+Links with recent health-check failures sort after clean ones, and selection
+samples randomly among the top five so equal nodes rotate.
+
+### Why `SetMaunetLinkAsDefault` must not be used with `run_agent = true`
+
+`SetMaunetLinkAsDefault(id)` is a direct manual override for `run_agent = false`.
+Calling it while the agent is running (`run_agent = true`) conflicts with the
+agent in three ways:
+
+1. **Desynchronised state:** `SetMaunetLinkAsDefault` switches the active proxy
+   in the mihomo core, but does not update the agent's internal `current_id`.
+2. **Misattributed health checks:** the agent probes health through the shared
+   core tunnel (`mewnet_probe`), so it will end up measuring your manually
+   selected link while recording the latency and failures against its own
+   `current_id` in SQLite.
+3. **Overwritten selection:** on the next failover, slow-node replacement or
+   pool rotation, the agent routes its own candidate and removes the previous
+   proxy from the core.
+
+Rule of thumb:
+
+- **`run_agent = true`** — the agent owns the selection; read the active link
+  with `GetMaunetDefaultLink()` or `GetMaunetStatus()` and never call
+  `SetMaunetLinkAsDefault`.
+- **`run_agent = false`** — your code owns the selection via
+  `SetMaunetLinkAsDefault(id)`.
+
+Note: the background agent wakes up when there is at least one subscription in
+the database (`AddMaunetSubscription`); if you only have manual links added with
+`AddMaunetLink`, either use `run_agent = false` with `SetMaunetLinkAsDefault` or
+query `mewnet_subs_first_alive` / `mewnet_subs_random_best_alive`.
 
 ## Under the hood
 

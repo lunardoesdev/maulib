@@ -447,7 +447,24 @@ with `mewnet_subs_close`.
 
 Full schema and index list: [`SUBSCRIPTIONS.md`](SUBSCRIPTIONS.md#sqlite).
 
-## Discovery agent
+## Discovery agent (automatic proxy selection)
+
+Automatic proxy selection and failover live in the discovery agent. You can
+turn it on in two ways:
+
+- **In `maunet.h` (global API):** set `settings.run_agent = true` before
+  `InitMaunet(&settings)`. Add at least one subscription with
+  `AddMaunetSubscription(...)`; the agent tests configs in the background,
+  selects a working link for the mixed inbound, health-checks it every 6 s,
+  fails over on 2/3 failed checks and replaces slow nodes (`slow_factor`,
+  `slow_floor_ms`, `slow_checks`, `slow_cooldown_sec`). `GetMaunetDefaultLink()`
+  returns the id of the link currently selected by the agent. Do not call
+  `SetMaunetLinkAsDefault` while `run_agent = true` — it is only for manual
+  selection when `run_agent = false`, and calling it under the agent
+  desynchronises health checks and gets overwritten on the next switch.
+- **In `mewnet_subs.h` (handle API):** start the agent explicitly with
+  `mewnet_agent_start` when you want log/state callbacks or a manual
+  "change proxy" trigger (`mewnet_agent_request_switch`).
 
 The agent is the whole loop: refresh subscriptions on schedule, test configs
 within the rate limit, keep a pool of alive proxies, health-check the active one

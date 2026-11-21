@@ -8,12 +8,13 @@
  * maunet keeps that state in the library, so application code only deals with
  * link ids:
  *
- *     MaunetSettings settings = MaunetSettingsDefault();
+ *     maunet_settings settings = MaunetSettingsDefault();
  *     settings.db_path = "data/app.db";
+ *     settings.run_agent = true;
  *     if (!InitMaunet(&settings)) { ... GetMaunetError() ... }
  *
- *     int64_t link = AddMaunetLink("vless://...").id;
- *     SetMaunetLinkAsDefault(link);
+ *     AddMaunetSubscription("https://example.com/sub.txt");
+ *     // the agent tests configs, selects a working link and fails over;
  *     // traffic now goes through http://127.0.0.1:<GetMaunetProxyPort()>
  *
  *     DeinitMaunet();
@@ -62,7 +63,14 @@ typedef struct maunet_settings {
     int pool_target;    /* agent: working nodes to keep, 0: 12 */
     size_t batch;       /* agent: configs per batch, 0: 70 */
     size_t concurrency; /* agent: parallel checks, 0: 70 */
-    bool run_agent;     /* start the discovery agent together with the core */
+    /*
+     * Automatic proxy selection and failover (the discovery agent).
+     * When true, a background loop tests configs, selects a working link for
+     * the mixed inbound, health-checks it every 6 s, fails over on 2/3 failed
+     * checks and swaps away from slow nodes. Requires a subscription in the DB
+     * and an enabled mixed inbound (`mixed_port >= 0`).
+     */
+    bool run_agent;
 
     /*
      * Slow-node policy of the agent. The active link is health-checked
@@ -182,6 +190,11 @@ MAUNET_API bool RemoveMaunetLink(int64_t link_id);
 /*
  * Register the link in the core and select it: the mixed inbound starts using
  * it immediately. Existing connections keep their old node until they close.
+ *
+ * Use this for manual selection when `run_agent = false`. Do not call it while
+ * the discovery agent is running (`run_agent = true`): the agent owns the active
+ * selection, health-checks the shared tunnel under its own current link id, and
+ * will overwrite a manual switch on the next failover or slow-node check.
  */
 MAUNET_API bool SetMaunetLinkAsDefault(int64_t link_id);
 
